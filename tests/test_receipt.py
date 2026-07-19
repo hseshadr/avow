@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import pytest
 from nacl.signing import SigningKey
+from pydantic import BaseModel, ConfigDict
 
 from assay.errors import ReplayMismatch, SignatureInvalid
 from assay.receipt import (
     ReceiptPayload,
-    ScoreReceipt,
+    SignedReceipt,
     payload_digest,
     sign_payload,
     verify_signature,
@@ -14,6 +15,16 @@ from assay.receipt import (
 
 _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
+
+
+class _WritSubject(BaseModel):
+    """A stand-in for a future *effect* (Writ) subject — a frozen model that is NOT
+    a ReceiptPayload — used to prove the trust envelope is subject-agnostic."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    effect: str
+    target: str
 
 
 def _payload() -> ReceiptPayload:
@@ -81,6 +92,20 @@ def test_should_fail_closed_on_malformed_signature_hex() -> None:
 def test_should_expose_score_receipt_as_public_symbol() -> None:
     # Given the signed receipt type
     receipt = sign_payload(_payload(), SigningKey(_SEED))
-    # Then it is a ScoreReceipt carrying the signed payload as its subject
-    assert isinstance(receipt, ScoreReceipt)
+    # Then it is a SignedReceipt envelope carrying the signed payload as its subject
+    assert isinstance(receipt, SignedReceipt)
     assert receipt.payload.score == 0.8
+
+
+def test_should_sign_and_verify_a_non_score_subject_with_the_same_envelope() -> None:
+    # Given a subject that is NOT a ReceiptPayload (a future Writ effect subject)
+    subject = _WritSubject(effect="revoke", target="key-7")
+    # When the SAME trust-envelope functions sign, digest and verify it — unchanged
+    receipt = sign_payload(subject, SigningKey(_SEED))
+    # Then the envelope carries the subject verbatim and verifies under the pinned key
+    assert receipt.payload == subject
+    assert receipt.payload_hash == payload_digest(subject)
+    verify_signature(receipt, expected_public_key=_EXPECTED)
+    # And a different pinned signer is rejected
+    with pytest.raises(SignatureInvalid):
+        verify_signature(receipt, expected_public_key="ab" * 32)
