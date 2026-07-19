@@ -68,6 +68,16 @@ def test_should_raise_signature_invalid_when_payload_is_tampered() -> None:
         verify_signature(tampered, expected_public_key=_EXPECTED)
 
 
+def test_should_fail_closed_on_malformed_signature_hex() -> None:
+    # Given a receipt whose signature is not valid hex
+    receipt = sign_payload(_payload(), SigningKey(_SEED))
+    bad = receipt.model_copy(update={"signature": "zz"})
+    # When verified against the correct pinned signer
+    # Then it fails closed with a coded SignatureInvalid — never a raw ValueError
+    with pytest.raises(SignatureInvalid):
+        verify_signature(bad, expected_public_key=_EXPECTED)
+
+
 def test_should_expose_score_receipt_as_public_symbol() -> None:
     # Given the signed receipt type
     receipt = sign_payload(_payload(), SigningKey(_SEED))
