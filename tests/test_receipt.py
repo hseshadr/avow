@@ -13,6 +13,7 @@ from assay.receipt import (
 )
 
 _SEED = bytes(range(32))
+_EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
 
 
 def _payload() -> ReceiptPayload:
@@ -30,9 +31,9 @@ def _payload() -> ReceiptPayload:
 def test_should_verify_a_freshly_signed_receipt() -> None:
     # Given a payload signed with a deterministic key
     receipt = sign_payload(_payload(), SigningKey(_SEED))
-    # When verified
+    # When verified against the pinned expected signer
     # Then verification passes (no exception) and fields are populated
-    verify_signature(receipt)
+    verify_signature(receipt, expected_public_key=_EXPECTED)
     assert len(receipt.signature) == 128  # 64 bytes hex
     assert len(receipt.public_key) == 64  # 32 bytes hex
 
@@ -52,7 +53,7 @@ def test_should_raise_replay_mismatch_when_hash_is_tampered() -> None:
     # When verified
     # Then the hash check fails first
     with pytest.raises(ReplayMismatch):
-        verify_signature(tampered)
+        verify_signature(tampered, expected_public_key=_EXPECTED)
 
 
 def test_should_raise_signature_invalid_when_payload_is_tampered() -> None:
@@ -64,7 +65,7 @@ def test_should_raise_signature_invalid_when_payload_is_tampered() -> None:
     )
     # When verified — hash matches the new payload, but the signature does not
     with pytest.raises(SignatureInvalid):
-        verify_signature(tampered)
+        verify_signature(tampered, expected_public_key=_EXPECTED)
 
 
 def test_should_expose_score_receipt_as_public_symbol() -> None:
