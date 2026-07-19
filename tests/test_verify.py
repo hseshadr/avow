@@ -4,9 +4,9 @@ import pytest
 from nacl.signing import SigningKey
 
 from assay.receipt import ReceiptPayload, ScoreReceipt, sign_payload
-from assay.writ import Allowlist, EffectReceipt, EffectRequest, KeyholderEffector, gate
 from avow.errors import SignatureInvalid
 from avow.verify import verify_receipt
+from writ import Allowlist, EffectReceipt, EffectRequest, KeyholderEffector, gate
 
 _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
