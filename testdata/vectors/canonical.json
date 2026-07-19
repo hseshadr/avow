@@ -1,0 +1,102 @@
+[
+  {
+    "name": "empty_object",
+    "payload": {},
+    "canonical_hex": "7b7d",
+    "content_hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  {
+    "name": "key_shuffle",
+    "payload": {
+      "b": 2,
+      "a": 1,
+      "c": 3
+    },
+    "canonical_hex": "7b2261223a312c2262223a322c2263223a337d",
+    "content_hash": "sha256:e6a3385fb77c287a712e7f406a451727f0625041823ecf23bea7ef39b2e39805"
+  },
+  {
+    "name": "unicode",
+    "payload": {
+      "text": "hélloé"
+    },
+    "canonical_hex": "7b2274657874223a2268c3a96c6c6fc3a9227d",
+    "content_hash": "sha256:cc66197fb33c0633df2e75815ead17ad005a5d84ba5ff3677b6404a76e055e4a"
+  },
+  {
+    "name": "floats",
+    "payload": {
+      "half": 0.5,
+      "tenth": 0.1,
+      "big": 1e+21,
+      "neg_zero": -0.0,
+      "tiny": 1e-07
+    },
+    "canonical_hex": "7b22626967223a31652b32312c2268616c66223a302e352c226e65675f7a65726f223a302c2274656e7468223a302e312c2274696e79223a31652d377d",
+    "content_hash": "sha256:fef0a22d30485d8c488aa6e0b5b79bd4eae6fb8e423cf3aaa171de475a3ff42f"
+  },
+  {
+    "name": "ints",
+    "payload": {
+      "zero": 0,
+      "neg": -42,
+      "big": 1000000
+    },
+    "canonical_hex": "7b22626967223a313030303030302c226e6567223a2d34322c227a65726f223a307d",
+    "content_hash": "sha256:4d32c9abcac838d01f492f1780c024f75d2567e52d35d535e39a20a0a518e065"
+  },
+  {
+    "name": "nested",
+    "payload": {
+      "arr": [
+        1,
+        [
+          2,
+          3
+        ],
+        {
+          "k": "v"
+        }
+      ],
+      "obj": {
+        "x": {
+          "y": [
+            true,
+            false,
+            null
+          ]
+        }
+      }
+    },
+    "canonical_hex": "7b22617272223a5b312c5b322c335d2c7b226b223a2276227d5d2c226f626a223a7b2278223a7b2279223a5b747275652c66616c73652c6e756c6c5d7d7d7d",
+    "content_hash": "sha256:11c8f2e93869a02ede5ba8e10b15e08cc259226ccd793ea5e33769ffbc2fefa9"
+  },
+  {
+    "name": "primitives",
+    "payload": {
+      "t": true,
+      "f": false,
+      "n": null
+    },
+    "canonical_hex": "7b2266223a66616c73652c226e223a6e756c6c2c2274223a747275657d",
+    "content_hash": "sha256:22e00dc2f7b01420f940fbdbfbdf34fa0667cc6500186495023ba37722cbd05e"
+  },
+  {
+    "name": "array_top",
+    "payload": [
+      1,
+      2,
+      3,
+      "a",
+      null
+    ],
+    "canonical_hex": "5b312c322c332c2261222c6e756c6c5d",
+    "content_hash": "sha256:988f534bddc7fa6a287c168b9a81c99509564ded61d735597c73a56dcbc05e71"
+  },
+  {
+    "name": "string_top",
+    "payload": "just a string",
+    "canonical_hex": "226a757374206120737472696e6722",
+    "content_hash": "sha256:3fe01def54b1c6cd795b2ebfcbab64150f6a507bce043040c662c682eebfed1e"
+  }
+]
