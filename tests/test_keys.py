@@ -3,7 +3,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
-from assay.keys import generate_signing_key, load_signing_key, save_signing_key
+from avow.keys import generate_signing_key, load_signing_key, save_signing_key
 
 
 def test_should_round_trip_a_signing_key_through_disk(tmp_path: Path) -> None:

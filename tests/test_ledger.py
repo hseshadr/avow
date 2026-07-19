@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from assay.errors import LedgerIntegrityError
-from assay.ledger import append, read_all, verify_integrity
 from assay.receipt import ReceiptPayload, ScoreReceipt, sign_payload
+from avow.errors import LedgerIntegrityError
+from avow.ledger import append, read_all, verify_integrity
 
 _SEED = bytes(range(32))
 
@@ -29,7 +29,7 @@ def test_should_append_only_and_read_back_in_order(tmp_path: Path) -> None:
     append(_receipt(0.1), path=path)
     append(_receipt(0.2), path=path)
     # When read back
-    entries = read_all(path)
+    entries = read_all(path, ScoreReceipt)
     # Then both survive, in append order (append-only, nothing overwritten)
     assert len(entries) == 2
     assert entries[0].payload.score == 0.1
@@ -40,7 +40,7 @@ def test_should_return_empty_when_ledger_absent(tmp_path: Path) -> None:
     # Given no ledger file
     # When read
     # Then the result is empty, not an error
-    assert read_all(tmp_path / "missing.jsonl") == ()
+    assert read_all(tmp_path / "missing.jsonl", ScoreReceipt) == ()
 
 
 def test_should_raise_integrity_error_when_a_line_is_tampered(tmp_path: Path) -> None:
@@ -52,4 +52,4 @@ def test_should_raise_integrity_error_when_a_line_is_tampered(tmp_path: Path) ->
     # When integrity is verified
     # Then it fails closed
     with pytest.raises(LedgerIntegrityError):
-        verify_integrity(path)
+        verify_integrity(path, ScoreReceipt)

@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 from nacl.signing import SigningKey
 
-from assay.errors import SignatureInvalid
 from assay.receipt import ReceiptPayload, ScoreReceipt, sign_payload
-from assay.verify import verify_receipt
 from assay.writ import Allowlist, EffectReceipt, EffectRequest, KeyholderEffector, gate
+from avow.errors import SignatureInvalid
+from avow.verify import verify_receipt
 
 _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
