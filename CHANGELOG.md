@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0] - 2026-07-19
 ### Changed
 - **Repackaged as distribution `avow`** exposing three top-level import packages:
   `avow` (the shared trust envelope), `assay` (scoring face, `import avow`), and
