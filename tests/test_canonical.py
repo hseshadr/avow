@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from assay.canonical import canonical_bytes, content_hash
-from assay.errors import CanonicalizationFailed
+from avow.canonical import canonical_bytes, content_hash
+from avow.errors import CanonicalizationFailed
 
 
 def test_should_be_key_order_independent_when_hashing() -> None:

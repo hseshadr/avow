@@ -1,0 +1,46 @@
+{
+  "name": "@edgeproc/avow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-side Avow envelope: RFC-8785 canonical bytes + Ed25519 sign/verify, byte-compatible with the Python avow kernel.",
+  "license": "MIT",
+  "author": "Harish Seshadri",
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "gate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.1.0",
+    "canonicalize": "^3.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.7",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.7"
+  }
+}

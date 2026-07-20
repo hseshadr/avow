@@ -1,0 +1,38 @@
+{
+  "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+  "public_key": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+  "receipts": [
+    {
+      "payload": {
+        "kind": "score",
+        "score": 0.5,
+        "tags": [
+          "a",
+          "b"
+        ]
+      },
+      "payload_hash": "sha256:598557f8e6ca84cccb6dc64ce5755abdf91477003738aa80b144ba9a31647ac9",
+      "signature": "85dd359688d7242019d5060a64a0faf15245387f242b7a881b76de74e7f39519f71cb23087de8fa838c0f4f3fa6c58371fc59f19ea3528c87eb326720da95b08"
+    },
+    {
+      "payload": {
+        "kind": "effect",
+        "score": 0.1,
+        "tags": []
+      },
+      "payload_hash": "sha256:d88f14c90e0db095fba877f0e4c6d65771f885851d9c7dc49b4433b3d17163da",
+      "signature": "2ade7d58d0a33b8df4839f934ca70c27aa0c5c1af38c47d7f0123578bb995845e4acd6c430dcf8aeadb0d7b8eee0a345ec9bfdf32863cdfee96ec565b19ac70a"
+    },
+    {
+      "payload": {
+        "kind": "edge",
+        "score": 1e-07,
+        "tags": [
+          "x"
+        ]
+      },
+      "payload_hash": "sha256:4c97a67eafb6aa19a58e74907a23ecbfac0a5fe94146b87b0660011786746e82",
+      "signature": "7954b427ccf3841b89b6c26da2ad1281537a69d690d6457f85e747cf64ce99ea78b38ab5852ce39e5d3693ab65c251b3d73d978808b1e769a02db95667708c00"
+    }
+  ]
+}
