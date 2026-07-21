@@ -111,9 +111,15 @@ describe("round-trip with a freshly generated key", () => {
     const seed = generateSeedHex();
     const subject: JsonValue = { kind: "score", score: 0.25, tags: [] };
     const receipt = await signPayload(subject, seed);
+    // Replace the whole signature with a fixed all-zero 64-byte signature —
+    // never coincidentally equal to a real one — matching the Python side
+    // (tests/test_verify.py: `"signature": "00" * 64`). Flipping only the
+    // final byte is unsound: Ed25519 signatures satisfy S < L ≈ 2^252, so
+    // that byte is already 0x00 roughly 1 in 16 times, making the
+    // "corruption" a no-op and the test flaky.
     const corrupted = {
       ...receipt,
-      signature: `${receipt.signature.slice(0, -2)}00`,
+      signature: "00".repeat(64),
     };
     await expect(
       verifySignature(corrupted, receipt.public_key),

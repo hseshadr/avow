@@ -70,4 +70,7 @@ def test_score_receipt_roundtrip_unchanged() -> None:
     # When a score payload is signed and verified through the shared envelope
     receipt = sign_payload(payload, key)
     # Then it verifies under its pinned signer (behavior unchanged by the split)
-    verify_signature(receipt, expected_public_key=public_key_hex(key))
+    assert verify_signature(receipt, expected_public_key=public_key_hex(key)) is None
+    # ...and the round trip preserved the subject rather than merely not raising
+    assert receipt.payload == payload
+    assert receipt.public_key == public_key_hex(key)

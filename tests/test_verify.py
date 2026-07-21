@@ -36,8 +36,9 @@ def test_should_pass_offline_for_an_untouched_receipt() -> None:
     # Given a valid receipt and no network
     receipt = _receipt()
     # When verified offline against the pinned expected signer
-    # Then no exception is raised
-    verify_receipt(receipt, expected_public_key=_EXPECTED)
+    # Then it returns nothing and raises nothing — the fail-closed contract is
+    # "silence means valid", so asserting the None pins that contract explicitly.
+    assert verify_receipt(receipt, expected_public_key=_EXPECTED) is None
 
 
 def test_should_fail_offline_for_a_forged_signature() -> None:
@@ -71,10 +72,14 @@ def test_should_verify_both_faces_with_the_one_public_verifier() -> None:
     allow = _effect_receipt("read")
     deny = _effect_receipt("delete")
     # When the SAME public verify_receipt checks all three under the pinned signer
-    # Then all pass: one envelope, one verifier, both faces
-    verify_receipt(score, expected_public_key=_EXPECTED)
-    verify_receipt(allow, expected_public_key=_EXPECTED)
-    verify_receipt(deny, expected_public_key=_EXPECTED)
+    # Then all three pass: one envelope, one verifier, both faces
+    assert verify_receipt(score, expected_public_key=_EXPECTED) is None
+    assert verify_receipt(allow, expected_public_key=_EXPECTED) is None
+    assert verify_receipt(deny, expected_public_key=_EXPECTED) is None
+    # ...and they really were the two different faces carrying two different subjects
+    assert allow.payload.decision == "allow"
+    assert deny.payload.decision == "deny"
+    assert score.payload.metric == "binary"
 
 
 def test_should_reject_an_effect_receipt_under_the_wrong_signer() -> None:
