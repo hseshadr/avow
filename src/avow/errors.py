@@ -36,3 +36,18 @@ class LedgerIntegrityError(AvowError):
     """A ledger entry's stored hash disagrees with its recomputed hash."""
 
     code: ClassVar[str] = "avow.ledger_integrity"
+
+
+class LedgerUnreadable(AvowError):
+    """The ledger is missing, is not a regular file, or cannot be read.
+
+    Distinct from an *empty* ledger, which is a legitimate initial state. A ledger
+    that could not be read answers nothing, so it must never be reported as intact."""
+
+    code: ClassVar[str] = "avow.ledger_unreadable"
+
+
+class LedgerEntryMalformed(AvowError):
+    """A ledger line is not a parseable receipt of the expected type."""
+
+    code: ClassVar[str] = "avow.ledger_entry_malformed"

@@ -1,22 +1,32 @@
 # Changelog
 
-## [0.1.1] - 2026-07-20
+## [Unreleased]
+
+Not tagged and not published. The newest release on PyPI is `avow` 0.1.0; on npm,
+`@edgeproc/avow` 0.1.0. To use anything below, install from source (see the README).
+
 ### Added
 - **`assay verify-ledger`** — re-derives every ledger entry's content hash and fails
   closed with the coded `avow.ledger_integrity` if one was edited on disk. The check
   needs no key: identity is the content hash, so anyone holding the file can run it.
   `avow.read_all` / `avow.verify_integrity` are now exported from `avow` alongside
   `avow.append`, so the ledger's read half is reachable from the public surface.
-
-### Changed
-- **CLI failures report their coded cause** (`avow.signature_invalid`,
-  `avow.replay_mismatch`, `avow.ledger_integrity`) instead of collapsing to a bare
-  pass/fail line, so a caller can branch on the cause without matching message text.
-- `keygen --out` and `--ledger` now default from `AssaySettings`
-  (`ASSAY_SIGNING_KEY_PATH`, `ASSAY_LEDGER_PATH`) rather than from literals inlined in
-  the command signatures.
+- **Coded errors for an unusable ledger:** `avow.ledger_unreadable` (missing, not a
+  regular file, or permission-denied) and `avow.ledger_entry_malformed` (a line that is
+  not a parseable receipt, previously surfaced as a raw pydantic traceback).
 
 ### Fixed
+- **Ledger reads no longer fail open.** `read_all` returned `()` for an absent path, so
+  `verify-ledger` pointed at a typo'd or never-written file printed
+  `OK: ledger verified, 0 entries intact` and exited `0` — a clean bill of health for a
+  file it never opened. Reads now fail closed with `avow.ledger_unreadable`. An
+  *existing but empty* ledger remains a pass: that is a legitimate initial state.
+- **Coverage measured less code than it reported.** The `exclude_lines` entry `\.\.\.`
+  was meant to skip bare `...` stub bodies, but it also matched the ellipsis inside
+  `tuple[X, ...]` type annotations — silently excluding every function whose signature
+  carried one, including the ledger's own `read_all` and `verify_integrity`. Anchored to
+  `^\s*\.\.\.$`; Protocol stubs now carry an explicit `# pragma: no cover`. This
+  surfaced 22 previously unmeasured statements (499 -> 521 at the time of the fix).
 - **Flaky TypeScript signature test.** The corrupted-signature case overwrote only the
   final byte of an Ed25519 signature; because `S < L ≈ 2²⁵²` that byte is already `0x00`
   roughly 1 in 16 times, so the "corruption" was intermittently a no-op and the valid
@@ -25,6 +35,20 @@
 - **Workflow pin guard no longer has two blind spots.** It globbed `*.yml` only (a
   `*.yaml` workflow bypassed the check entirely) and passed vacuously when the scan
   matched nothing at all. It now scans both extensions and asserts a non-zero ref count.
+
+### Changed
+- **Branch coverage is now measured** (`--cov-branch`), not just statement coverage.
+- **Demo tests assert on captured stdout**, not only on `exit_code == 0`. They re-parse
+  the demo's own printed hash, calibration numbers and composite interval, so gutting
+  what the demo computes fails the tests rather than passing silently.
+- `poe gate-all` runs the Python gate and the TypeScript gate together, mirroring CI's
+  two jobs. `poe gate` remains Python-only; `poe gate-ts` is the TypeScript half.
+- **CLI failures report their coded cause** (`avow.signature_invalid`,
+  `avow.replay_mismatch`, `avow.ledger_integrity`) instead of collapsing to a bare
+  pass/fail line, so a caller can branch on the cause without matching message text.
+- `keygen --out` and `--ledger` now default from `AssaySettings`
+  (`ASSAY_SIGNING_KEY_PATH`, `ASSAY_LEDGER_PATH`) rather than from literals inlined in
+  the command signatures.
 
 ## [0.1.0] - 2026-07-19
 ### Changed
