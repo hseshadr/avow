@@ -12,9 +12,13 @@ from assay.errors import (
 from avow.errors import (
     AvowError,
     CanonicalizationFailed,
+    LedgerEntryMalformed,
     LedgerIntegrityError,
+    LedgerUnreadable,
     ReplayMismatch,
+    SignatureBytesInvalid,
     SignatureInvalid,
+    SignerMismatch,
 )
 
 # The scoring face keeps its own ``assay.*`` catalog under ``AssayError``.
@@ -29,8 +33,14 @@ _ASSAY_CODES = [
 _AVOW_CODES = [
     (CanonicalizationFailed, "avow.canonicalization_failed"),
     (SignatureInvalid, "avow.signature_invalid"),
+    # A provenance failure (untrusted signer) is coded apart from a tamper failure
+    # (bad bytes); the tamper case keeps the published `avow.signature_invalid`.
+    (SignerMismatch, "avow.signer_mismatch"),
+    (SignatureBytesInvalid, "avow.signature_invalid"),
     (ReplayMismatch, "avow.replay_mismatch"),
     (LedgerIntegrityError, "avow.ledger_integrity"),
+    (LedgerUnreadable, "avow.ledger_unreadable"),
+    (LedgerEntryMalformed, "avow.ledger_entry_malformed"),
 ]
 
 

@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "./canonical.js";
-import { ReplayMismatch, SignatureInvalid } from "./errors.js";
+import {
+  ReplayMismatch,
+  SignatureBytesInvalid,
+  SignatureInvalid,
+  SignerMismatch,
+} from "./errors.js";
 import { generateSeedHex, publicKeyHex } from "./keys.js";
 import { signPayload, verifySignature } from "./receipt.js";
 
@@ -136,5 +141,51 @@ describe("round-trip with a freshly generated key", () => {
     await expect(
       verifySignature(malformed, receipt.public_key),
     ).rejects.toMatchObject({ code: "avow.signature_invalid" });
+  });
+});
+
+// Mirrors Python tests/test_verify.py. The `code` strings are a cross-language
+// contract (see ts/README.md), so the provenance/tamper split must be identical
+// on both sides: an untrusted signer is `avow.signer_mismatch` in either language.
+describe("a wrong signer is coded apart from wrong signature bytes", () => {
+  it("codes a pinned-key mismatch as a provenance failure", async () => {
+    const receipt = await signPayload(
+      { kind: "score", score: 0.5 } satisfies JsonValue,
+      generateSeedHex(),
+    );
+    const untrusted = await publicKeyHex(generateSeedHex());
+    await expect(verifySignature(receipt, untrusted)).rejects.toMatchObject({
+      code: "avow.signer_mismatch",
+    });
+    await expect(verifySignature(receipt, untrusted)).rejects.toThrow(
+      SignerMismatch,
+    );
+  });
+
+  it("codes corrupted signature bytes as a tamper failure", async () => {
+    const seed = generateSeedHex();
+    const receipt = await signPayload(
+      { kind: "score", score: 0.25 } satisfies JsonValue,
+      seed,
+    );
+    const corrupted = { ...receipt, signature: "00".repeat(64) };
+    // Keeps the published `avow.signature_invalid` — the code this case has
+    // always carried; only the provenance case above gets a new one.
+    await expect(
+      verifySignature(corrupted, receipt.public_key),
+    ).rejects.toMatchObject({ code: "avow.signature_invalid" });
+    await expect(
+      verifySignature(corrupted, receipt.public_key),
+    ).rejects.toThrow(SignatureBytesInvalid);
+  });
+
+  it("keeps both causes catchable as the published SignatureInvalid base", () => {
+    // The split is additive: `instanceof SignatureInvalid` still catches both,
+    // so code written against the published 0.1.0 base keeps working.
+    expect(new SignerMismatch("x")).toBeInstanceOf(SignatureInvalid);
+    expect(new SignatureBytesInvalid("x")).toBeInstanceOf(SignatureInvalid);
+    expect(new SignerMismatch("x").code).not.toBe(
+      new SignatureBytesInvalid("x").code,
+    );
   });
 });

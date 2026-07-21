@@ -21,7 +21,7 @@ from nacl.signing import SigningKey, VerifyKey
 from pydantic import BaseModel, ConfigDict
 
 from avow.canonical import canonical_bytes, content_hash
-from avow.errors import ReplayMismatch, SignatureInvalid
+from avow.errors import ReplayMismatch, SignatureBytesInvalid, SignerMismatch
 
 
 class SignedReceipt[SubjectT: BaseModel](BaseModel):
@@ -78,13 +78,15 @@ def verify_signature[SubjectT: BaseModel](
     hash and verify the detached Ed25519 signature under that pinned key."""
     _check_hash(receipt)
     if receipt.public_key != expected_public_key:
-        raise SignatureInvalid("receipt public key is not the expected signer")
+        # Provenance failure, coded apart from a bytes failure: this receipt was signed
+        # by a key the caller does not trust, so its signature is never even checked.
+        raise SignerMismatch("receipt public key is not the expected signer")
     message = canonical_bytes(receipt.payload.model_dump(mode="json"))
     # Malformed / wrong-length hex (bytes.fromhex, VerifyKey) raises ValueError; a
-    # bad signature raises BadSignatureError. Both are verification failures, so we
-    # fail closed with a coded SignatureInvalid rather than leaking a raw traceback.
+    # bad signature raises BadSignatureError. Both are tamper failures, so we fail
+    # closed with a coded error rather than leaking a raw traceback.
     try:
         verify_key = VerifyKey(bytes.fromhex(expected_public_key))
         verify_key.verify(message, bytes.fromhex(receipt.signature))
     except (ValueError, BadSignatureError) as exc:
-        raise SignatureInvalid("signature does not match payload") from exc
+        raise SignatureBytesInvalid("signature does not match payload") from exc

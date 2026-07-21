@@ -15,7 +15,11 @@
 
 import { etc, signAsync, verifyAsync } from "@noble/ed25519";
 import { canonicalBytes, contentHash, type JsonValue } from "./canonical.js";
-import { ReplayMismatch, SignatureInvalid } from "./errors.js";
+import {
+  ReplayMismatch,
+  SignatureBytesInvalid,
+  SignerMismatch,
+} from "./errors.js";
 import { publicKeyHex } from "./keys.js";
 
 /** A signed subject: the subject plus its content-hash, public key and signature. */
@@ -54,17 +58,20 @@ async function checkSignatureBytes(
       etc.hexToBytes(publicKeyHexPinned),
     );
   } catch (cause) {
-    throw new SignatureInvalid("signature does not match payload", { cause });
+    throw new SignatureBytesInvalid("signature does not match payload", {
+      cause,
+    });
   }
   if (!ok) {
-    throw new SignatureInvalid("signature does not match payload");
+    throw new SignatureBytesInvalid("signature does not match payload");
   }
 }
 
 /**
  * Verify a receipt against a *pinned* signer key. Fail-closed: throws a coded
- * `ReplayMismatch` (content hash disagrees), or `SignatureInvalid` (embedded key
- * is not the pinned signer, or the signature does not verify).
+ * `ReplayMismatch` (content hash disagrees), `SignerMismatch` (embedded key is
+ * not the pinned signer), or `SignatureBytesInvalid` (the signature does not
+ * verify). The latter two both extend the published `SignatureInvalid` base.
  *
  * The order mirrors Python exactly: recompute the hash first, then reject any
  * receipt whose embedded `public_key` is not the caller-pinned key — independent
@@ -80,7 +87,9 @@ export async function verifySignature<S extends JsonValue>(
     throw new ReplayMismatch("payload hash does not match payload content");
   }
   if (receipt.public_key !== expectedPublicKey) {
-    throw new SignatureInvalid("receipt public key is not the expected signer");
+    // Provenance failure, coded apart from a bytes failure: signed by a key
+    // the caller does not trust, so the signature is never even checked.
+    throw new SignerMismatch("receipt public key is not the expected signer");
   }
   await checkSignatureBytes(
     canonicalBytes(receipt.payload),

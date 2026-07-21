@@ -4,7 +4,7 @@ import pytest
 from nacl.signing import SigningKey
 
 from assay.receipt import ReceiptPayload, ScoreReceipt, sign_payload
-from avow.errors import SignatureInvalid
+from avow.errors import SignatureBytesInvalid, SignatureInvalid, SignerMismatch
 from avow.verify import verify_receipt
 from writ import Allowlist, EffectReceipt, EffectRequest, KeyholderEffector, gate
 
@@ -88,3 +88,45 @@ def test_should_reject_an_effect_receipt_under_the_wrong_signer() -> None:
     # Then pinning a different signer rejects it — the effect face fails closed too
     with pytest.raises(SignatureInvalid):
         verify_receipt(receipt, expected_public_key="ab" * 32)
+
+
+# Two security-distinct failures, two codes. "Signed by a key you do not trust" is a
+# PROVENANCE failure; "these bytes do not check out" is a TAMPER failure. A caller may
+# reasonably alert, log or retry differently for each, so neither may be reachable only
+# by string-matching an English message.
+
+
+def test_should_code_a_pinned_key_mismatch_as_a_signer_mismatch() -> None:
+    # Given a receipt validly self-signed by an attacker's own key
+    attacker = SigningKey(bytes(range(1, 33)))
+    forgery = sign_payload(_receipt().payload, attacker)
+    # When verified against the pinned signer
+    with pytest.raises(SignerMismatch) as caught:
+        verify_receipt(forgery, expected_public_key=_EXPECTED)
+    # Then it is coded as a provenance failure, distinctly from a bad-bytes failure
+    assert caught.value.code == "avow.signer_mismatch"
+    assert caught.value.code != SignatureBytesInvalid.code
+
+
+def test_should_code_corrupted_signature_bytes_distinctly_from_a_signer_mismatch() -> None:
+    # Given a receipt from the pinned signer whose signature bytes were flipped
+    forged = _receipt().model_copy(update={"signature": "00" * 64})
+    # When verified against that same pinned signer (so the key matches; only bytes fail)
+    with pytest.raises(SignatureBytesInvalid) as caught:
+        verify_receipt(forged, expected_public_key=_EXPECTED)
+    # Then it keeps the published `avow.signature_invalid` code, distinct from the
+    # provenance code — this is the case that string has always named
+    assert caught.value.code == "avow.signature_invalid"
+    assert caught.value.code != SignerMismatch.code
+
+
+@pytest.mark.parametrize("error_cls", [SignerMismatch, SignatureBytesInvalid])
+def test_should_keep_both_causes_catchable_as_signature_invalid(
+    error_cls: type[SignatureInvalid],
+) -> None:
+    # Given either specific cause
+    # Then an existing `except SignatureInvalid:` still catches it — the split is
+    # additive, so callers written against the published base keep working
+    assert issubclass(error_cls, SignatureInvalid)
+    with pytest.raises(SignatureInvalid):
+        raise error_cls("boom")

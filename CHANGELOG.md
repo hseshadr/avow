@@ -14,6 +14,18 @@ Not tagged and not published. The newest release on PyPI is `avow` 0.1.0; on npm
 - **Coded errors for an unusable ledger:** `avow.ledger_unreadable` (missing, not a
   regular file, or permission-denied) and `avow.ledger_entry_malformed` (a line that is
   not a parseable receipt, previously surfaced as a raw pydantic traceback).
+- **A wrong signer is coded apart from wrong signature bytes.** Both cases previously
+  raised `SignatureInvalid` / `avow.signature_invalid`, so a caller could only tell a
+  *provenance* failure from a *tamper* failure by string-matching the English message.
+  Now `SignerMismatch` (`avow.signer_mismatch`) is raised when the receipt's embedded
+  key is not the pinned signer, and `SignatureBytesInvalid` when the curve check
+  rejects. Mirrored identically in `@edgeproc/avow` (the codes are a cross-language
+  contract). **Compatibility:** both are subclasses of `SignatureInvalid`, so every
+  existing `except SignatureInvalid:` / `instanceof SignatureInvalid` keeps working, and
+  `SignatureBytesInvalid` deliberately keeps the published `avow.signature_invalid`
+  string. The one behaviour change on upgrade: code matching
+  `exc.code == "avow.signature_invalid"` to detect a *pinned-key mismatch* now sees
+  `avow.signer_mismatch`. Published 0.1.0 consumers are unaffected until they upgrade.
 
 ### Fixed
 - **Ledger reads no longer fail open.** `read_all` returned `()` for an absent path, so
