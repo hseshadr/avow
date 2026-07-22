@@ -1,9 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.1] - 2026-07-21
 
-Not tagged and not published. The newest release on PyPI is `avow` 0.1.0; on npm,
-`@edgeproc/avow` 0.1.0. To use anything below, install from source (see the README).
+First co-release through the OIDC rail: a `v*` tag fans out to PyPI (`avow`) and npm
+(`@edgeproc/avow`) token-free. `@edgeproc/receipt-ui` is versioned separately and is
+not part of this release.
 
 ### Added
 - **`assay verify-ledger`** — re-derives every ledger entry's content hash and fails
