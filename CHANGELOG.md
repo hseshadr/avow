@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.2.0] - unreleased
+
+Prepared in this repo, not yet tagged. A breaking release that makes three trust claims
+literally true. Pair-versioned with `@edgeproc/avow` on npm; `@edgeproc/receipt-ui` is
+versioned separately.
+
+### Changed
+- **BREAKING — ledger tamper-evidence is now real.** `avow.verify_integrity` and
+  `assay verify-ledger` now require the signer's pinned **public** key and verify each
+  entry's **Ed25519 signature**, not just re-derive its content hash. A hash-only check
+  was an overclaim: an adversary with no signing key can still recompute an entry's
+  public content hash and launder a forged payload past it. The signature — which only
+  the private seed can produce — is what makes tampering detectable by anyone holding the
+  public key. `verify_integrity(path, receipt_type, *, expected_public_key=...)` and
+  `verify-ledger --public-key <file>` are now required arguments.
+- **BREAKING — score receipts are self-describing, replay is unconditional.**
+  `ReceiptPayload` gains a signed `determinism` field recording the settings that
+  determine its numbers (`min_samples`, `bootstrap_resamples`, `confidence_level`,
+  `ece_bins`, `bootstrap_seed`). `assay.replay(request, receipt)` drops its `settings`
+  parameter and recomputes from the settings recorded **in the receipt**, so a legitimate
+  receipt always replays — no ambient environment has to match, and a receipt computed
+  under different settings is explicitly different rather than a silent replay failure.
+  This changes every classification receipt's `payload_hash`.
+- **BREAKING — governed effects are attested atomically.** `writ.EffectSubject` gains an
+  `outcome` field (`not_run` / `attempted` / `succeeded` / `failed`); `writ.gate` and
+  `governed_gate` gain an optional `emit` sink. On allow, the gate seals an `attempted`
+  receipt and emits it **before** running the effect, then seals the `succeeded`/`failed`
+  outcome after — so a failed or partial privileged effect always leaves a signed
+  attestation of the attempt. Wire `emit` to `avow.ledger.append` for durable capture.
+
+### Fixed
+- `assay.verify` now also catches `CanonicalizationFailed`, so a payload that cannot be
+  canonicalized fails closed (`False`) instead of raising through the boolean facade.
+- Pinned-key comparison in `verify_signature` is case-insensitive: hex identity is not
+  spelling-bound, so an uppercase pinned key and a lowercase embedded key are the same
+  signer.
+- `avow.ledger.append` takes an exclusive advisory lock (`O_APPEND` + `flock`), so
+  concurrent appenders cannot interleave a half-written line.
+- `@edgeproc/receipt-ui` `StatusPill` ignores a blank (`""`/whitespace) label override
+  and keeps the built-in verdict, so a fail-closed status chip never renders empty.
+
 ## [0.1.1] - 2026-07-21
 
 First co-release through the OIDC rail: a `v*` tag fans out to PyPI (`avow`) and npm
