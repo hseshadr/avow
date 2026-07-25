@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from assay.receipt import ReceiptPayload, ScoreReceipt, sign_payload
+from assay.receipt import ReceiptPayload, ScoreReceipt, payload_digest, sign_payload
 from avow.errors import LedgerEntryMalformed, LedgerIntegrityError, LedgerUnreadable
 from avow.ledger import append, read_all, verify_integrity
 
 _SEED = bytes(range(32))
+_EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
 
 
 def _receipt(score: float) -> ScoreReceipt:
@@ -43,7 +44,7 @@ def test_should_fail_closed_when_ledger_is_absent(tmp_path: Path) -> None:
     # When integrity is verified
     # Then it fails closed: an unanswered question is not a clean bill of health
     with pytest.raises(LedgerUnreadable):
-        verify_integrity(missing, ScoreReceipt)
+        verify_integrity(missing, ScoreReceipt, expected_public_key=_EXPECTED)
     with pytest.raises(LedgerUnreadable):
         read_all(missing, ScoreReceipt)
 
@@ -55,7 +56,7 @@ def test_should_fail_closed_when_ledger_path_is_a_directory(tmp_path: Path) -> N
     # When integrity is verified
     # Then it fails closed rather than crashing uncoded
     with pytest.raises(LedgerUnreadable):
-        verify_integrity(directory, ScoreReceipt)
+        verify_integrity(directory, ScoreReceipt, expected_public_key=_EXPECTED)
 
 
 def test_should_fail_closed_when_ledger_is_unreadable(tmp_path: Path) -> None:
@@ -68,7 +69,7 @@ def test_should_fail_closed_when_ledger_is_unreadable(tmp_path: Path) -> None:
     # When integrity is verified
     # Then it fails closed with the coded cause
     with pytest.raises(LedgerUnreadable):
-        verify_integrity(path, ScoreReceipt)
+        verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED)
 
 
 def test_should_fail_closed_when_a_line_is_malformed(tmp_path: Path) -> None:
@@ -80,7 +81,7 @@ def test_should_fail_closed_when_a_line_is_malformed(tmp_path: Path) -> None:
     # When integrity is verified
     # Then it names the coded cause instead of leaking a parse traceback
     with pytest.raises(LedgerEntryMalformed):
-        verify_integrity(path, ScoreReceipt)
+        verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED)
 
 
 def test_should_verify_an_existing_empty_ledger_as_zero_entries(tmp_path: Path) -> None:
@@ -90,7 +91,7 @@ def test_should_verify_an_existing_empty_ledger_as_zero_entries(tmp_path: Path) 
     # When integrity is verified
     # Then it passes with zero entries — an empty ledger is a legitimate initial
     # state, unlike an absent one, which answers nothing
-    assert verify_integrity(path, ScoreReceipt) == ()
+    assert verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED) == ()
 
 
 def test_should_raise_integrity_error_when_a_line_is_tampered(tmp_path: Path) -> None:
@@ -102,4 +103,22 @@ def test_should_raise_integrity_error_when_a_line_is_tampered(tmp_path: Path) ->
     # When integrity is verified
     # Then it fails closed
     with pytest.raises(LedgerIntegrityError):
-        verify_integrity(path, ScoreReceipt)
+        verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED)
+
+
+def test_should_reject_a_rehashed_tampered_entry_without_the_signing_key(tmp_path: Path) -> None:
+    # Given a ledger entry an adversary edited AND re-hashed. With no signing key they
+    # can still recompute the PUBLIC payload_hash, so a hash-only check would wave the
+    # forgery through — the exact laundering a real tamper-evidence check must catch.
+    path = tmp_path / "ledger.jsonl"
+    append(_receipt(0.1), path=path)
+    stored = ScoreReceipt.model_validate_json(path.read_text())
+    forged_payload = stored.payload.model_copy(update={"score": 0.999})
+    forged = stored.model_copy(
+        update={"payload": forged_payload, "payload_hash": payload_digest(forged_payload)}
+    )
+    path.write_text(forged.model_dump_json() + "\n")
+    # Then integrity verification REJECTS it: the Ed25519 signature no longer matches the
+    # payload, and a recomputed hash cannot launder a forged entry past the pinned key.
+    with pytest.raises(LedgerIntegrityError):
+        verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED)

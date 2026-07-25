@@ -57,6 +57,14 @@ def test_should_be_byte_identical_when_signed_twice() -> None:
     assert first == second
 
 
+def test_should_verify_when_the_pinned_key_case_differs() -> None:
+    # Given a genuine receipt whose embedded key is lowercase hex
+    receipt = sign_payload(_payload(), SigningKey(_SEED))
+    # When the pinned key is spelled in UPPERCASE — the same signer, different case
+    # Then verification still passes: hex identity is case-insensitive, not spelling-bound
+    verify_signature(receipt, expected_public_key=_EXPECTED.upper())
+
+
 def test_should_raise_replay_mismatch_when_hash_is_tampered() -> None:
     # Given a receipt with a corrupted payload_hash
     receipt = sign_payload(_payload(), SigningKey(_SEED))

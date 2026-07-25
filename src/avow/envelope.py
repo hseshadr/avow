@@ -77,7 +77,9 @@ def verify_signature[SubjectT: BaseModel](
     the ``expected_public_key`` the caller pinned out-of-band, then recompute the
     hash and verify the detached Ed25519 signature under that pinned key."""
     _check_hash(receipt)
-    if receipt.public_key != expected_public_key:
+    # Hex is case-insensitive, so pin by value, not by spelling: a lowercase embedded key
+    # and an uppercase pinned key are the SAME signer and must not read as a mismatch.
+    if receipt.public_key.lower() != expected_public_key.lower():
         # Provenance failure, coded apart from a bytes failure: this receipt was signed
         # by a key the caller does not trust, so its signature is never even checked.
         raise SignerMismatch("receipt public key is not the expected signer")

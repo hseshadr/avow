@@ -2,8 +2,11 @@
 
 Each line is one ``SignedReceipt`` of some subject ``S``; its identity is the
 ``payload_hash``. Appending never rewrites history. ``verify_integrity`` re-derives
-each payload's hash and fails closed if a stored hash disagrees — so on-disk tampering
-is detectable without the signing key.
+each payload's hash AND verifies its Ed25519 signature against a pinned public key,
+failing closed on the first disagreement — so on-disk tampering is detectable with the
+signer's *public* key alone, never the secret signing key. A hash-only check would be
+fooled by an adversary who edits a payload and recomputes its (public) content hash;
+the detached signature is the thing they cannot forge without the private seed.
 
 Reading needs the concrete receipt type to deserialize into (``SignedReceipt[S]``),
 so ``read_all`` / ``verify_integrity`` take it as an argument. The score face passes
@@ -17,18 +20,29 @@ legitimate initial state and verifies as zero entries."""
 
 from __future__ import annotations
 
+import fcntl
 import os
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
 from avow.envelope import SignedReceipt, payload_digest
-from avow.errors import LedgerEntryMalformed, LedgerIntegrityError, LedgerUnreadable
+from avow.errors import (
+    LedgerEntryMalformed,
+    LedgerIntegrityError,
+    LedgerUnreadable,
+    SignatureInvalid,
+)
+from avow.verify import verify_receipt
 
 
 def append[S: BaseModel](receipt: SignedReceipt[S], *, path: Path) -> None:
-    """Append one receipt as a JSON line."""
+    """Append one receipt as a JSON line.
+
+    Opened ``"a"`` (``O_APPEND`` — every write lands at end-of-file) under an exclusive
+    advisory lock, so two concurrent appenders can never interleave a half-written line."""
     with path.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.write(receipt.model_dump_json() + "\n")
 
 
@@ -60,12 +74,27 @@ def read_all[S: BaseModel](
     return tuple(_parse_entry(line, receipt_type) for line in lines if line.strip())
 
 
+def _verify_entry[S: BaseModel](receipt: SignedReceipt[S], expected_public_key: str) -> None:
+    """Fail closed unless the entry's hash matches AND its signature verifies under the
+    pinned key. The hash pre-check names the corrupted entry; the signature check is what
+    stops an adversary who recomputed the hash from laundering a forged payload through."""
+    if payload_digest(receipt.payload) != receipt.payload_hash:
+        raise LedgerIntegrityError(f"tampered ledger entry: {receipt.payload_hash}")
+    try:
+        verify_receipt(receipt, expected_public_key=expected_public_key)
+    except SignatureInvalid as exc:
+        raise LedgerIntegrityError(f"tampered ledger entry: {receipt.payload_hash}") from exc
+
+
 def verify_integrity[S: BaseModel](
-    path: Path, receipt_type: type[SignedReceipt[S]]
+    path: Path, receipt_type: type[SignedReceipt[S]], *, expected_public_key: str
 ) -> tuple[SignedReceipt[S], ...]:
-    """Return all receipts, raising if any stored hash disagrees with its content."""
+    """Return all receipts, raising if any entry fails hash OR signature verification.
+
+    ``expected_public_key`` is the signer's public key, pinned out-of-band (the ``.pub``
+    from ``keygen``) — never read from an entry, whose embedded key an attacker could
+    swap. Verifying signatures, not just hashes, is what makes tamper-evidence real."""
     receipts = read_all(path, receipt_type)
     for receipt in receipts:
-        if payload_digest(receipt.payload) != receipt.payload_hash:
-            raise LedgerIntegrityError(f"tampered ledger entry: {receipt.payload_hash}")
+        _verify_entry(receipt, expected_public_key)
     return receipts
