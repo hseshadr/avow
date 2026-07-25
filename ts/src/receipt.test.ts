@@ -112,6 +112,18 @@ describe("round-trip with a freshly generated key", () => {
     );
   });
 
+  it("verifies when the pinned key differs only in hex case", async () => {
+    // Mirrors Python tests/test_receipt.py: hex identity is case-insensitive,
+    // not spelling-bound, so an UPPERCASE pinned key and the lowercase embedded
+    // key are the SAME signer and must verify — not read as a SignerMismatch.
+    const seed = generateSeedHex();
+    const subject: JsonValue = { kind: "score", score: 0.5, tags: ["a"] };
+    const receipt = await signPayload(subject, seed);
+    await expect(
+      verifySignature(receipt, receipt.public_key.toUpperCase()),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects a valid-hash receipt whose signature is corrupted", async () => {
     const seed = generateSeedHex();
     const subject: JsonValue = { kind: "score", score: 0.25, tags: [] };

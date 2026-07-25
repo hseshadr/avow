@@ -86,7 +86,10 @@ export async function verifySignature<S extends JsonValue>(
   if ((await contentHash(receipt.payload)) !== receipt.payload_hash) {
     throw new ReplayMismatch("payload hash does not match payload content");
   }
-  if (receipt.public_key !== expectedPublicKey) {
+  // Hex is case-insensitive, so pin by value, not by spelling (mirrors Python
+  // avow.envelope): a lowercase embedded key and an uppercase pinned key are the
+  // SAME signer and must not read as a mismatch.
+  if (receipt.public_key.toLowerCase() !== expectedPublicKey.toLowerCase()) {
     // Provenance failure, coded apart from a bytes failure: signed by a key
     // the caller does not trust, so the signature is never even checked.
     throw new SignerMismatch("receipt public key is not the expected signer");
