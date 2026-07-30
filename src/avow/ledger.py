@@ -1,12 +1,21 @@
-"""Append-only, content-addressed receipt ledger (JSONL), subject-agnostic.
+"""Content-addressed receipt ledger (JSONL) of independently signed entries, subject-agnostic.
 
 Each line is one ``SignedReceipt`` of some subject ``S``; its identity is the
-``payload_hash``. Appending never rewrites history. ``verify_integrity`` re-derives
-each payload's hash AND verifies its Ed25519 signature against a pinned public key,
-failing closed on the first disagreement — so on-disk tampering is detectable with the
-signer's *public* key alone, never the secret signing key. A hash-only check would be
-fooled by an adversary who edits a payload and recomputes its (public) content hash;
-the detached signature is the thing they cannot forge without the private seed.
+``payload_hash``. Writes are ``O_APPEND`` under a lock, so appending never rewrites
+history. ``verify_integrity`` re-derives each payload's hash AND verifies its Ed25519
+signature against a pinned public key, failing closed on the first disagreement — so
+on-disk tampering *within an entry* is detectable with the signer's *public* key alone,
+never the secret signing key. A hash-only check would be fooled by an adversary who edits
+a payload and recomputes its (public) content hash; the detached signature is the thing
+they cannot forge without the private seed.
+
+KNOWN GAP — this ledger is NOT append-only in the tamper-evident sense. Entries are not
+chained: there is no ``prev_hash``, sequence number, or root anywhere here. The audit
+therefore proves "every line I was shown is genuine" and NEVER "these are the lines, in
+this order, and all of them". Deleting, truncating (including to empty), reordering,
+replaying, and splicing in a same-signer entry from another ledger all pass. This is
+disclosed in the README's "Honest limits" and pinned by strict-``xfail`` tests in
+``tests/test_ledger.py``; the fix is a hash chain with the head pinned out-of-band.
 
 Reading needs the concrete receipt type to deserialize into (``SignedReceipt[S]``),
 so ``read_all`` / ``verify_integrity`` take it as an argument. The score face passes
@@ -15,8 +24,9 @@ so ``read_all`` / ``verify_integrity`` take it as an argument. The score face pa
 Reads fail CLOSED. A ledger that is missing, is not a regular file, cannot be read, or
 holds an unparseable line raises a coded error rather than reading as "no entries" —
 otherwise a mistyped path would silently report a clean bill of health for a file
-nobody ever opened. An *existing but empty* ledger is the one benign case: it is a
-legitimate initial state and verifies as zero entries."""
+nobody ever opened. An *existing but empty* ledger verifies as zero entries: it is a
+legitimate initial state, and — per the gap above — one this cannot distinguish from a
+ledger truncated to nothing."""
 
 from __future__ import annotations
 

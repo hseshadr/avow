@@ -15,6 +15,12 @@ versioned separately.
   the private seed can produce — is what makes tampering detectable by anyone holding the
   public key. `verify_integrity(path, receipt_type, *, expected_public_key=...)` and
   `verify-ledger --public-key <file>` are now required arguments.
+  **Scope, stated plainly:** this makes *per-entry* tamper-evidence real. Whole-entry
+  attacks — deleting, truncating, reordering, replaying, or splicing in a same-signer
+  entry — are still undetected, because entries are not chained to one another. The
+  ledger is therefore not append-only in the tamper-evident sense; see the README's
+  [Honest limits](README.md#honest-limits). A hash chain is the fix and is not in this
+  release.
 - **BREAKING — score receipts are self-describing, replay is unconditional.**
   `ReceiptPayload` gains a signed `determinism` field recording the settings that
   determine its numbers (`min_samples`, `bootstrap_resamples`, `confidence_level`,
@@ -31,6 +37,12 @@ versioned separately.
   attestation of the attempt. Wire `emit` to `avow.ledger.append` for durable capture.
 
 ### Fixed
+- **`assay.replay` compared the recomputed digest against the receipt's own
+  `payload_hash` *field*, never against `receipt.payload`.** A payload edited behind an
+  untouched hash field therefore replayed as `True` while `verify` correctly returned
+  `False`. `replay` now re-derives the digest from `receipt.payload` — the same
+  `payload_digest` the envelope's hash check uses — and additionally requires the stored
+  `payload_hash` to agree, so a self-inconsistent receipt never replays.
 - `assay.verify` now also catches `CanonicalizationFailed`, so a payload that cannot be
   canonicalized fails closed (`False`) instead of raising through the boolean facade.
 - Pinned-key comparison in `verify_signature` is case-insensitive: hex identity is not
