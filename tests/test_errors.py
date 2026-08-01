@@ -6,6 +6,7 @@ from assay.errors import (
     AssayError,
     InsufficientSamples,
     InvalidScoreRequest,
+    ReplayRefused,
     ScoringExtraMissing,
     UnknownMetric,
 )
@@ -16,7 +17,7 @@ from avow.errors import (
     LedgerHeadUnreadable,
     LedgerIntegrityError,
     LedgerUnreadable,
-    ReplayMismatch,
+    PayloadHashMismatch,
     SignatureBytesInvalid,
     SignatureInvalid,
     SignerMismatch,
@@ -28,6 +29,7 @@ _ASSAY_CODES = [
     (UnknownMetric, "assay.unknown_metric"),
     (InsufficientSamples, "assay.insufficient_samples"),
     (ScoringExtraMissing, "assay.scoring_extra_missing"),
+    (ReplayRefused, "assay.replay_refused"),
 ]
 
 # The trust envelope keeps its own ``avow.*`` catalog under ``AvowError``.
@@ -38,7 +40,8 @@ _AVOW_CODES = [
     # (bad bytes); the tamper case keeps the published `avow.signature_invalid`.
     (SignerMismatch, "avow.signer_mismatch"),
     (SignatureBytesInvalid, "avow.signature_invalid"),
-    (ReplayMismatch, "avow.replay_mismatch"),
+    # NOT "replay": the envelope detects tamper here and detects replay nowhere.
+    (PayloadHashMismatch, "avow.payload_hash_mismatch"),
     (LedgerIntegrityError, "avow.ledger_integrity"),
     (LedgerUnreadable, "avow.ledger_unreadable"),
     (LedgerEntryMalformed, "avow.ledger_entry_malformed"),

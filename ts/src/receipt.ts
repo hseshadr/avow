@@ -16,7 +16,7 @@
 import { etc, signAsync, verifyAsync } from "@noble/ed25519";
 import { canonicalBytes, contentHash, type JsonValue } from "./canonical.js";
 import {
-  ReplayMismatch,
+  PayloadHashMismatch,
   SignatureBytesInvalid,
   SignerMismatch,
 } from "./errors.js";
@@ -69,9 +69,18 @@ async function checkSignatureBytes(
 
 /**
  * Verify a receipt against a *pinned* signer key. Fail-closed: throws a coded
- * `ReplayMismatch` (content hash disagrees), `SignerMismatch` (embedded key is
- * not the pinned signer), or `SignatureBytesInvalid` (the signature does not
+ * `PayloadHashMismatch` (content hash disagrees), `SignerMismatch` (embedded key
+ * is not the pinned signer), or `SignatureBytesInvalid` (the signature does not
  * verify). The latter two both extend the published `SignatureInvalid` base.
+ *
+ * Proves **who signed it** and **that it is unmodified**. Does NOT prove
+ * *freshness* — that this is the first time the receipt has been presented, or
+ * that it was made recently. A signature binds content to a signer; it cannot
+ * bind it to an occasion, so a genuine receipt captured on the wire verifies here
+ * forever. That is the same property that makes offline verification years later
+ * possible at all. This package ships the envelope only — there is no ledger in
+ * the browser build — so if you need "have I seen this before?", keep that state
+ * yourself (a server-side nonce, or the Python `avow.ledger` chain).
  *
  * The order mirrors Python exactly: recompute the hash first, then reject any
  * receipt whose embedded `public_key` is not the caller-pinned key — independent
@@ -84,7 +93,9 @@ export async function verifySignature<S extends JsonValue>(
   expectedPublicKey: string,
 ): Promise<void> {
   if ((await contentHash(receipt.payload)) !== receipt.payload_hash) {
-    throw new ReplayMismatch("payload hash does not match payload content");
+    throw new PayloadHashMismatch(
+      "payload hash does not match payload content",
+    );
   }
   // Hex is case-insensitive, so pin by value, not by spelling (mirrors Python
   // avow.envelope): a lowercase embedded key and an uppercase pinned key are the

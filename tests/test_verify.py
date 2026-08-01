@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from nacl.signing import SigningKey
 
+import avow.errors
 from assay.receipt import ReceiptPayload, ScoreReceipt, sign_payload
-from avow.errors import SignatureBytesInvalid, SignatureInvalid, SignerMismatch
+from avow.errors import (
+    AvowError,
+    LedgerIntegrityError,
+    SignatureBytesInvalid,
+    SignatureInvalid,
+    SignerMismatch,
+)
+from avow.ledger import append, verify_integrity
 from avow.verify import verify_receipt
 from writ import Allowlist, EffectReceipt, EffectRequest, KeyholderEffector, gate
 
@@ -12,15 +22,19 @@ _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
 
 
-def _receipt() -> ScoreReceipt:
+def _receipt_scoring(score: float) -> ScoreReceipt:
     payload = ReceiptPayload(
         assay_version="0.0.1",
         metric="binary",
         metric_version="1",
         inputs_hash="sha256:abc",
-        score=0.8,
+        score=score,
     )
     return sign_payload(payload, SigningKey(_SEED))
+
+
+def _receipt() -> ScoreReceipt:
+    return _receipt_scoring(0.8)
 
 
 def _effect_receipt(action: str) -> EffectReceipt:
@@ -130,3 +144,77 @@ def test_should_keep_both_causes_catchable_as_signature_invalid(
     assert issubclass(error_cls, SignatureInvalid)
     with pytest.raises(SignatureInvalid):
         raise error_cls("boom")
+
+
+# ---------------------------------------------------------------------------
+# Freshness: the boundary of what a signature can prove.
+#
+# A signature binds content to a signer. It cannot bind it to an OCCASION, so no
+# verifier holding only a receipt and a public key can tell a first presentation from
+# the thousandth. That is not a gap to be closed inside the envelope — it is what
+# "offline, years later, with no network and no state" means. The tests below pin BOTH
+# halves of the boundary so neither can drift: the envelope accepts a replay, and the
+# ledger chain is the thing that refuses one.
+# ---------------------------------------------------------------------------
+
+
+def test_a_replayed_receipt_verifies_because_a_signature_carries_no_freshness() -> None:
+    # Given a genuine receipt, captured on the wire by anyone who saw it
+    receipt = _receipt()
+    captured = ScoreReceipt.model_validate_json(ScoreReceipt.model_dump_json(receipt))
+    assert ScoreReceipt.model_dump_json(captured) == ScoreReceipt.model_dump_json(receipt)
+    # When it is presented again, unchanged, at any later time
+    # Then it verifies — and it always will. The envelope holds no record of what it has
+    # already seen, so "have I seen this before?" is a question it cannot be asked.
+    # Replay defence belongs to the ledger (below) or to a caller-held nonce, never here.
+    for _ in range(100):
+        assert verify_receipt(captured, expected_public_key=_EXPECTED) is None
+
+
+def test_the_ledger_chain_is_what_refuses_a_replayed_receipt(tmp_path: Path) -> None:
+    # Given the SAME receipt the envelope happily re-verifies above, recorded in a ledger
+    receipt = _receipt()
+    path = tmp_path / "ledger.jsonl"
+    append(receipt, path=path)
+    head = append(_receipt_scoring(0.5), path=path)
+    # When an attacker replays the first entry by appending its line a second time
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([*lines, lines[0]]) + "\n", encoding="utf-8")
+    # Then the ledger rejects it against the pinned head, even though every line is
+    # genuinely signed. THIS is where replay is caught — sequence, not signature.
+    # Watched go red: only with BOTH the chain walk and the head comparison disabled.
+    # Either one alone catches this, which is defence in depth, not a redundant check.
+    with pytest.raises(LedgerIntegrityError):
+        verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED, expected_head=head)
+
+
+def test_the_tamper_error_must_not_be_named_or_coded_as_replay() -> None:
+    # Given a receipt whose payload was edited behind its stale hash field
+    receipt = _receipt()
+    tampered = receipt.model_copy(
+        update={"payload": receipt.payload.model_copy(update={"score": 0.99})}
+    )
+    # When the envelope rejects it
+    with pytest.raises(AvowError) as caught:
+        verify_receipt(tampered, expected_public_key=_EXPECTED)
+    # Then neither its class name nor its published code may say "replay". The envelope
+    # detects TAMPER here and detects replay nowhere; a crypto reader who sees
+    # `avow.replay_mismatch` on a verifier reasonably concludes replay is handled, and
+    # it is not. The name is a claim, held to the same bar as a sentence in the README.
+    assert "replay" not in type(caught.value).__name__.lower()
+    assert "replay" not in caught.value.code
+    assert caught.value.code == "avow.payload_hash_mismatch"
+
+
+def test_no_published_envelope_error_claims_replay_detection() -> None:
+    # Given every error the envelope publishes
+    names = [name for name in dir(avow.errors) if not name.startswith("_")]
+    published = [getattr(avow.errors, name) for name in names]
+    codes = [
+        cls.code
+        for cls in published
+        if isinstance(cls, type) and issubclass(cls, AvowError) and cls is not AvowError
+    ]
+    # Then none of them is coded as a replay failure, because none of them detects one
+    assert codes, "expected a non-empty published error catalog"
+    assert [code for code in codes if "replay" in code] == []
