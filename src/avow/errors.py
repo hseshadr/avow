@@ -73,3 +73,13 @@ class LedgerEntryMalformed(AvowError):
     """A ledger line is not a parseable receipt of the expected type."""
 
     code: ClassVar[str] = "avow.ledger_entry_malformed"
+
+
+class LedgerHeadUnreadable(AvowError):
+    """The pinned chain head is missing or unparseable.
+
+    The head is a verifier *input*, like the pinned public key. Without it there is
+    nothing to check the ledger's end against, so this fails closed rather than
+    falling back to the head the file computes for itself."""
+
+    code: ClassVar[str] = "avow.ledger_head_unreadable"

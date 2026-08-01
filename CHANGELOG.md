@@ -7,6 +7,32 @@ literally true. Pair-versioned with `@edgeproc/avow` on npm; `@edgeproc/receipt-
 versioned separately.
 
 ### Changed
+- **BREAKING — the ledger is a hash chain with the head pinned out-of-band, so it is now
+  append-only in the tamper-evident sense.** Each line is a `LedgerEntry` carrying `seq`,
+  `prev_hash` and the receipt, so the last entry's hash commits to the entire history.
+  `append` returns the ledger's new `LedgerHead` (count + hash);
+  `verify_integrity(..., expected_head=...)` and `verify-ledger --head <file>` now require
+  it, and `score` writes it to `<ledger>.head`. Verification walks the chain from genesis
+  and rejects any ledger that does not end exactly at the pinned head.
+  **This closes the gap the previous entry disclosed.** Deleting an entry, truncating the
+  file (including emptying it), reordering, replaying, and splicing in a same-signer entry
+  from another ledger each returned `OK: ledger verified, N entries intact` and exit `0`
+  before; all now fail with `avow.ledger_integrity` and exit `1`. Each attack is a test in
+  `tests/test_ledger.py` (the strict-`xfail` markers are gone), and each of the four guards
+  has been watched go red with its own check disabled.
+  **Tests inverted, loudly:** `test_an_existing_empty_ledger_verifies_as_zero_entries_which_is_a_known_gap`
+  asserted the defect as the requirement — that an empty ledger *always* verifies. It is
+  now `test_a_fresh_empty_ledger_verifies_only_against_the_empty_head`: an empty file
+  passes against the empty head and **fails** against any other, which is what stops an
+  erased audit from reading as a fresh one.
+  **Honest limit, restated:** this moves the trust requirement from N lines to 32 bytes; it
+  does not remove it. A head file beside the ledger is a copy for carrying away, never a
+  control against an attacker who can write both. Reading an old-format (unchained) ledger
+  now fails with `avow.ledger_entry_malformed`; there is no migration path in 0.x.
+  New coded error: `avow.ledger_head_unreadable` (missing or unparseable pin — fails closed
+  rather than falling back to the head the file computes for itself).
+  New public API: `LedgerHead`, `LedgerEntry`, `EMPTY_HEAD`, `entry_hash`, `read_entries`,
+  `current_head`, `save_head`, `read_head`.
 - **BREAKING — ledger tamper-evidence is now real.** `avow.verify_integrity` and
   `assay verify-ledger` now require the signer's pinned **public** key and verify each
   entry's **Ed25519 signature**, not just re-derive its content hash. A hash-only check
@@ -15,12 +41,12 @@ versioned separately.
   the private seed can produce — is what makes tampering detectable by anyone holding the
   public key. `verify_integrity(path, receipt_type, *, expected_public_key=...)` and
   `verify-ledger --public-key <file>` are now required arguments.
-  **Scope, stated plainly:** this makes *per-entry* tamper-evidence real. Whole-entry
-  attacks — deleting, truncating, reordering, replaying, or splicing in a same-signer
-  entry — are still undetected, because entries are not chained to one another. The
-  ledger is therefore not append-only in the tamper-evident sense; see the README's
-  [Honest limits](README.md#honest-limits). A hash chain is the fix and is not in this
-  release.
+  **Scope, stated plainly:** this makes *per-entry* tamper-evidence real, and nothing
+  more. Whole-entry attacks — deleting, truncating, reordering, replaying, splicing in a
+  same-signer entry — remained undetected after this change, because entries were still
+  not chained to one another. The chain bullet above is what closed that, in the same
+  unreleased 0.2.0; this bullet is kept for the record of what each change actually
+  bought.
 - **BREAKING — score receipts are self-describing, replay is unconditional.**
   `ReceiptPayload` gains a signed `determinism` field recording the settings that
   determine its numbers (`min_samples`, `bootstrap_resamples`, `confidence_level`,
