@@ -1,10 +1,9 @@
 # Changelog
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-08-01
 
-Prepared in this repo, not yet tagged. A breaking release that makes three trust claims
-literally true. Pair-versioned with `@edgeproc/avow` on npm; `@edgeproc/receipt-ui` is
-versioned separately.
+A breaking release that makes three trust claims literally true. Pair-versioned with
+`@edgeproc/avow` on npm; `@edgeproc/receipt-ui` is versioned separately.
 
 ### Changed
 - **BREAKING — the ledger is a hash chain with the head pinned out-of-band, so it is now
