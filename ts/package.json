@@ -6,6 +6,21 @@
   },
   "type": "module",
   "description": "Browser-side Avow envelope: RFC-8785 canonical bytes + Ed25519 sign/verify, byte-compatible with the Python avow kernel.",
+  "keywords": [
+    "ed25519",
+    "rfc8785",
+    "jcs",
+    "canonical-json",
+    "signed-receipt",
+    "digital-signature",
+    "tamper-evident",
+    "offline-verification",
+    "provenance",
+    "audit-log",
+    "cryptography",
+    "browser",
+    "typescript"
+  ],
   "license": "MIT",
   "author": "Harish Seshadri",
   "repository": {
