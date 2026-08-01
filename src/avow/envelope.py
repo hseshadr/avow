@@ -21,7 +21,7 @@ from nacl.signing import SigningKey, VerifyKey
 from pydantic import BaseModel, ConfigDict
 
 from avow.canonical import canonical_bytes, content_hash
-from avow.errors import ReplayMismatch, SignatureBytesInvalid, SignerMismatch
+from avow.errors import PayloadHashMismatch, SignatureBytesInvalid, SignerMismatch
 
 
 class SignedReceipt[SubjectT: BaseModel](BaseModel):
@@ -62,7 +62,7 @@ def sign_payload[SubjectT: BaseModel](
 
 def _check_hash[SubjectT: BaseModel](receipt: SignedReceipt[SubjectT]) -> None:
     if payload_digest(receipt.payload) != receipt.payload_hash:
-        raise ReplayMismatch("payload hash does not match payload content")
+        raise PayloadHashMismatch("payload hash does not match payload content")
 
 
 def verify_signature[SubjectT: BaseModel](
@@ -75,7 +75,17 @@ def verify_signature[SubjectT: BaseModel](
     can swap in the attacker's key and pass a bare signature check. We therefore
     reject — independent of the signature — any receipt whose embedded key is not
     the ``expected_public_key`` the caller pinned out-of-band, then recompute the
-    hash and verify the detached Ed25519 signature under that pinned key."""
+    hash and verify the detached Ed25519 signature under that pinned key.
+
+    **What this proves, and what it does not.** It proves the receipt was signed by the
+    pinned key and has not been modified since. It does **not** prove *freshness* — that
+    this is the first time the receipt has been presented, or that it was made recently.
+    A signature binds content to a signer; it cannot bind it to an occasion. A genuine
+    receipt captured by anyone who saw it will verify here forever, unchanged, which is
+    the same property that makes offline verification years later possible at all.
+    If you need "has this been presented before?", the answer must come from state the
+    verifier keeps: record entries in ``avow.ledger`` (its chain rejects a replayed
+    entry against a pinned head) or carry a caller-supplied nonce inside the subject."""
     _check_hash(receipt)
     # Hex is case-insensitive, so pin by value, not by spelling: a lowercase embedded key
     # and an uppercase pinned key are the SAME signer and must not read as a mismatch.

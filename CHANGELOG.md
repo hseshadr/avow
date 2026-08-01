@@ -1,5 +1,44 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **BREAKING — `ReplayMismatch` is renamed `PayloadHashMismatch`, and its code
+  `avow.replay_mismatch` becomes `avow.payload_hash_mismatch`.** The error fired on a
+  payload edited behind a stale hash field — a **tamper** failure. It never detected
+  replay, and neither does anything else in the envelope. Naming the one error in a
+  cryptographic verifier's catalog "Replay" implied a property the package does not have,
+  which is the same class of defect as an untrue sentence in a README: a reader who sees
+  `avow.replay_mismatch` reasonably concludes replay is handled. It is not.
+  `ReplayMismatch` stays as a deprecated alias so `except ReplayMismatch:` /
+  `instanceof ReplayMismatch` keeps working; **a caller that branches on the literal
+  string `"avow.replay_mismatch"` must be updated.** Removed in 0.4.0. Mirrored in
+  `@edgeproc/avow` on npm, since the `code` strings are a cross-language contract.
+- **New `assay.replay_refused` (`ReplayRefused`), raised where the scoring face used to
+  raise the envelope's error.** `assay.replay` means "recompute this receipt from its
+  inputs and check it reproduces" — a scoring concept, not a cryptographic one. A receipt
+  recording no determinism settings now fails with an `assay.*` code instead of borrowing
+  an `avow.*` one that described a hash mismatch it never measured.
+
+### Documented
+- **Freshness is now stated as an explicit limit, in every place a caller reads.**
+  `verify_signature` / `verify_receipt` prove *who signed it* and *that it is unmodified*.
+  They do **not** prove that a receipt is fresh or has not been presented before. A
+  genuine receipt, captured and handed over again unchanged, is byte-identical to the
+  original and verifies forever — which is the same determinism that makes offline
+  verification years later work at all. This is correct-by-design for a bare signature;
+  what was wrong was leaving it unsaid while shipping an error called `ReplayMismatch`.
+  Now in the README's `Honest limits`, the tampered-record demo, the error-code table,
+  both verifier docstrings, and — most importantly — `ts/README.md`, because the npm
+  package ships the envelope **with no ledger at all**, so a browser caller has no
+  fallback and must hold replay state itself.
+- Two tests pin both halves of the boundary so neither can drift silently:
+  `test_a_replayed_receipt_verifies_because_a_signature_carries_no_freshness` (the
+  envelope accepts a replay, by design) and
+  `test_the_ledger_chain_is_what_refuses_a_replayed_receipt` (the ledger refuses one).
+  The second was watched go red with both the chain walk and the head comparison
+  disabled; either one alone catches it, which is defence in depth.
+
 ## [0.2.0] - 2026-08-01
 
 A breaking release that makes three trust claims literally true. Pair-versioned with

@@ -53,7 +53,25 @@ export class SignerMismatch extends SignatureInvalid {
  */
 export class SignatureBytesInvalid extends SignatureInvalid {}
 
-/** Recomputed content-hash does not match the receipt's stored hash. */
-export class ReplayMismatch extends AvowError {
-  public override readonly code = "avow.replay_mismatch";
+/**
+ * Recomputed content-hash does not match the receipt's stored hash.
+ *
+ * A TAMPER failure: the payload was edited behind an untouched hash field.
+ *
+ * Deliberately *not* called "replay". This envelope detects no replay at all — a
+ * validly-signed receipt presented a second time is byte-identical to its first
+ * presentation and verifies exactly as it did then. Naming this error after a
+ * property the envelope does not have would be a claim it cannot keep. This
+ * browser package ships the envelope only (no ledger), so replay defence is the
+ * caller's to hold.
+ */
+export class PayloadHashMismatch extends AvowError {
+  public override readonly code = "avow.payload_hash_mismatch";
 }
+
+/**
+ * @deprecated Renamed to `PayloadHashMismatch` — it never detected replay. Kept
+ * for one minor so `instanceof ReplayMismatch` written against 0.2.x keeps
+ * working; its `code` is now `avow.payload_hash_mismatch`. Removed in 0.4.0.
+ */
+export const ReplayMismatch = PayloadHashMismatch;

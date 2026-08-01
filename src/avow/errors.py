@@ -48,10 +48,24 @@ class SignatureBytesInvalid(SignatureInvalid):
     only the provenance case above gets a new one."""
 
 
-class ReplayMismatch(AvowError):
-    """Recomputed content-hash does not match the receipt's stored hash."""
+class PayloadHashMismatch(AvowError):
+    """Recomputed content-hash does not match the receipt's stored hash.
 
-    code: ClassVar[str] = "avow.replay_mismatch"
+    A TAMPER failure: the payload was edited behind an untouched hash field.
+
+    Deliberately **not** called "replay". The envelope detects no replay at all — a
+    validly-signed receipt presented a second time is byte-identical to its first
+    presentation and verifies exactly as it did then. Naming this error after a property
+    the envelope does not have would be a claim it cannot keep. Replay of a *recorded*
+    entry is caught by the ledger chain (``avow.ledger_integrity``), never here."""
+
+    code: ClassVar[str] = "avow.payload_hash_mismatch"
+
+
+# Deprecated alias, kept for one minor so `except ReplayMismatch:` written against 0.2.x
+# keeps working. The `code` it carries is now `avow.payload_hash_mismatch`; a caller that
+# branches on the old string must be updated. Removed in 0.4.0.
+ReplayMismatch = PayloadHashMismatch
 
 
 class LedgerIntegrityError(AvowError):

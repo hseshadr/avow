@@ -4,7 +4,7 @@ import pytest
 from nacl.signing import SigningKey
 from pydantic import BaseModel, ConfigDict
 
-from assay.errors import ReplayMismatch, SignatureInvalid
+from assay.errors import PayloadHashMismatch, SignatureInvalid
 from assay.receipt import (
     ReceiptPayload,
     SignedReceipt,
@@ -65,13 +65,13 @@ def test_should_verify_when_the_pinned_key_case_differs() -> None:
     verify_signature(receipt, expected_public_key=_EXPECTED.upper())
 
 
-def test_should_raise_replay_mismatch_when_hash_is_tampered() -> None:
+def test_should_raise_payload_hash_mismatch_when_hash_is_tampered() -> None:
     # Given a receipt with a corrupted payload_hash
     receipt = sign_payload(_payload(), SigningKey(_SEED))
     tampered = receipt.model_copy(update={"payload_hash": "sha256:deadbeef"})
     # When verified
     # Then the hash check fails first
-    with pytest.raises(ReplayMismatch):
+    with pytest.raises(PayloadHashMismatch):
         verify_signature(tampered, expected_public_key=_EXPECTED)
 
 

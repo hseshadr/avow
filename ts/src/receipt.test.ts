@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "./canonical.js";
 import {
-  ReplayMismatch,
+  type AvowError,
+  PayloadHashMismatch,
   SignatureBytesInvalid,
   SignatureInvalid,
   SignerMismatch,
@@ -77,7 +78,7 @@ describe("Python-signed receipts verify in TypeScript", () => {
           },
           data.public_key,
         ),
-      ).rejects.toThrow(ReplayMismatch);
+      ).rejects.toThrow(PayloadHashMismatch);
     });
   }
 });
@@ -199,5 +200,49 @@ describe("a wrong signer is coded apart from wrong signature bytes", () => {
     expect(new SignerMismatch("x").code).not.toBe(
       new SignatureBytesInvalid("x").code,
     );
+  });
+});
+
+// Mirrors Python tests/test_verify.py. A signature binds content to a signer; it
+// cannot bind it to an OCCASION. This package ships the envelope ONLY — there is no
+// ledger in the browser build — so a browser caller who needs replay defence must
+// hold that state itself. Saying so is the whole point of these two tests.
+describe("freshness is outside what a signature can prove", () => {
+  it("re-verifies a replayed receipt forever, because it holds no memory", async () => {
+    const seed = generateSeedHex();
+    const receipt = await signPayload(
+      { kind: "score", score: 0.5 } satisfies JsonValue,
+      seed,
+    );
+    // Captured on the wire by anyone who saw it, then presented again, unchanged.
+    const replayed = JSON.parse(JSON.stringify(receipt));
+    expect(JSON.stringify(replayed)).toBe(JSON.stringify(receipt));
+    for (let i = 0; i < 50; i += 1) {
+      await expect(
+        verifySignature(replayed, receipt.public_key),
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it("never names or codes a tamper failure as 'replay'", async () => {
+    const seed = generateSeedHex();
+    const receipt = await signPayload(
+      { kind: "score", score: 0.5 } satisfies JsonValue,
+      seed,
+    );
+    // A payload edited behind its untouched hash field: TAMPER, not replay.
+    const tampered = { ...receipt, payload: { kind: "score", score: 0.99 } };
+    let caught: AvowError | undefined;
+    try {
+      await verifySignature(tampered as typeof receipt, receipt.public_key);
+    } catch (error) {
+      caught = error as AvowError;
+    }
+    // The name is a claim, held to the same bar as a sentence in the README: this
+    // envelope detects replay nowhere, so nothing in it may be called "replay".
+    expect(caught).toBeInstanceOf(PayloadHashMismatch);
+    expect(caught?.constructor.name.toLowerCase()).not.toContain("replay");
+    expect(caught?.code).not.toContain("replay");
+    expect(caught?.code).toBe("avow.payload_hash_mismatch");
   });
 });
