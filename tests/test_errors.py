@@ -13,6 +13,7 @@ from avow.errors import (
     AvowError,
     CanonicalizationFailed,
     LedgerEntryMalformed,
+    LedgerHeadUnreadable,
     LedgerIntegrityError,
     LedgerUnreadable,
     ReplayMismatch,
@@ -41,6 +42,7 @@ _AVOW_CODES = [
     (LedgerIntegrityError, "avow.ledger_integrity"),
     (LedgerUnreadable, "avow.ledger_unreadable"),
     (LedgerEntryMalformed, "avow.ledger_entry_malformed"),
+    (LedgerHeadUnreadable, "avow.ledger_head_unreadable"),
 ]
 
 

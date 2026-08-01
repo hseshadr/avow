@@ -1,59 +1,157 @@
-"""Content-addressed receipt ledger (JSONL) of independently signed entries, subject-agnostic.
+"""Hash-chained receipt ledger (JSONL) of signed entries, subject-agnostic.
 
-Each line is one ``SignedReceipt`` of some subject ``S``; its identity is the
-``payload_hash``. Writes are ``O_APPEND`` under a lock, so appending never rewrites
-history. ``verify_integrity`` re-derives each payload's hash AND verifies its Ed25519
-signature against a pinned public key, failing closed on the first disagreement — so
-on-disk tampering *within an entry* is detectable with the signer's *public* key alone,
-never the secret signing key. A hash-only check would be fooled by an adversary who edits
-a payload and recomputes its (public) content hash; the detached signature is the thing
-they cannot forge without the private seed.
+Each line is one ``LedgerEntry``: a ``SignedReceipt`` of some subject ``S``, plus the
+two fields that make the log a *log* — its sequence number and the hash of the entry
+before it. Writes are ``O_APPEND`` under a lock, so appending never rewrites history.
 
-KNOWN GAP — this ledger is NOT append-only in the tamper-evident sense. Entries are not
-chained: there is no ``prev_hash``, sequence number, or root anywhere here. The audit
-therefore proves "every line I was shown is genuine" and NEVER "these are the lines, in
-this order, and all of them". Deleting, truncating (including to empty), reordering,
-replaying, and splicing in a same-signer entry from another ledger all pass. This is
-disclosed in the README's "Honest limits" and pinned by strict-``xfail`` tests in
-``tests/test_ledger.py``; the fix is a hash chain with the head pinned out-of-band.
+Two independent checks, because they answer two different questions:
+
+* **Per entry** — ``verify_integrity`` re-derives each payload's hash AND verifies its
+  Ed25519 signature against a pinned public key. This answers "is this line genuine?"
+  with the signer's *public* key alone, never the secret seed. A hash-only check would
+  be fooled by an adversary who edits a payload and recomputes its (public) content
+  hash; the detached signature is the thing they cannot forge.
+* **Across entries** — the chain walk. Every entry's ``prev_hash`` must equal the hash
+  of the entry before it and its ``seq`` must equal its position, so deleting,
+  reordering, replaying or splicing in a foreign entry breaks a link. This answers
+  "are these the lines, in this order?", which no per-line signature ever can: a
+  signature binds an entry to a signer, never to a ledger or to a position in one.
+
+A chain alone still cannot stop **truncation** — drop the last N lines and what remains
+is a perfectly self-consistent chain, as is an empty file. So the chain ends at a head
+(``LedgerHead``: how many entries, and the hash of the last) that the caller pins
+**out-of-band**, exactly as ``expected_public_key`` is pinned. ``append`` returns the
+new head; ``verify_integrity`` requires the pinned one and rejects any ledger that does
+not end exactly there. The honest limit: this moves the trust requirement from N lines
+to 32 bytes, it does not remove it. Those 32 bytes must live somewhere the ledger's
+writer cannot reach — another host, a git commit, a printout. A head file sitting
+beside the ledger buys nothing against an attacker who can write both.
 
 Reading needs the concrete receipt type to deserialize into (``SignedReceipt[S]``),
 so ``read_all`` / ``verify_integrity`` take it as an argument. The score face passes
-``ScoreReceipt``; other faces pass their own parametrization.
+``ScoreReceipt``; other faces pass their own parametrization. Chain-walking needs no
+such type: an entry's receipt is carried as JSON, so integrity of the *sequence* is
+checkable by a party that cannot parse the subjects at all.
 
 Reads fail CLOSED. A ledger that is missing, is not a regular file, cannot be read, or
 holds an unparseable line raises a coded error rather than reading as "no entries" —
 otherwise a mistyped path would silently report a clean bill of health for a file
-nobody ever opened. An *existing but empty* ledger verifies as zero entries: it is a
-legitimate initial state, and — per the gap above — one this cannot distinguish from a
-ledger truncated to nothing."""
+nobody ever opened. An existing but empty ledger is a legitimate initial state and
+verifies only against the empty head; a ledger truncated to nothing now fails against
+the head its operator pinned, which is the case the old zero-entry pass could not see."""
 
 from __future__ import annotations
 
 import fcntl
 import os
 from pathlib import Path
+from typing import TextIO
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+from avow.canonical import JsonValue, content_hash
 from avow.envelope import SignedReceipt, payload_digest
 from avow.errors import (
     LedgerEntryMalformed,
+    LedgerHeadUnreadable,
     LedgerIntegrityError,
     LedgerUnreadable,
     SignatureInvalid,
 )
 from avow.verify import verify_receipt
 
+# The predecessor of the first entry. No real digest can collide with it, so an entry
+# claiming genesis provenance can only ever be at position 0.
+GENESIS_HASH = "sha256:" + "0" * 64
 
-def append[S: BaseModel](receipt: SignedReceipt[S], *, path: Path) -> None:
-    """Append one receipt as a JSON line.
 
-    Opened ``"a"`` (``O_APPEND`` — every write lands at end-of-file) under an exclusive
-    advisory lock, so two concurrent appenders can never interleave a half-written line."""
-    with path.open("a", encoding="utf-8") as handle:
+class LedgerHead(BaseModel):
+    """Where the chain ends: how many entries the ledger holds, and the last one's hash.
+
+    This is the whole out-of-band pin — 32 bytes plus a count, regardless of how long
+    the ledger grows. Both fields matter: the hash alone cannot describe an empty
+    ledger, and a count alone would be trivial to fake."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    count: int
+    head_hash: str
+
+
+EMPTY_HEAD = LedgerHead(count=0, head_hash=GENESIS_HASH)
+"""The head of a ledger nobody has written to yet — a legitimate state to pin."""
+
+
+class LedgerEntry(BaseModel):
+    """One ledger line: its position, its predecessor's hash, and the receipt itself.
+
+    The receipt is held as JSON rather than a parsed subject so the chain can be walked
+    without knowing what any face's subject looks like; ``verify_integrity`` parses it
+    into the caller's concrete receipt type when it comes time to check signatures."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    seq: int
+    prev_hash: str
+    receipt: JsonValue
+
+
+def entry_hash(entry: LedgerEntry) -> str:
+    """The chain link: a hash binding this entry's position, its predecessor AND its
+    whole receipt — signature included. Changing any of the three breaks the next link."""
+    return content_hash(entry.model_dump(mode="json"))
+
+
+def _head_after(entry: LedgerEntry) -> LedgerHead:
+    """The head a ledger has once ``entry`` is its last line."""
+    return LedgerHead(count=entry.seq + 1, head_hash=entry_hash(entry))
+
+
+def _link_onto[S: BaseModel](head: LedgerHead, receipt: SignedReceipt[S]) -> LedgerEntry:
+    """Build the entry that extends a chain ending at ``head``."""
+    return LedgerEntry(
+        seq=head.count,
+        prev_hash=head.head_hash,
+        receipt=receipt.model_dump(mode="json"),
+    )
+
+
+def _parse_entry(line: str) -> LedgerEntry:
+    """Parse one ledger line, reporting a coded cause instead of a parse traceback."""
+    try:
+        return LedgerEntry.model_validate_json(line)
+    except ValidationError as exc:
+        raise LedgerEntryMalformed(f"ledger entry is not a valid chained entry: {exc}") from exc
+
+
+def _open_lines(handle: TextIO) -> list[str]:
+    """Every non-blank line currently in an open ledger, read from the top."""
+    handle.seek(0)
+    return [line for line in handle.read().splitlines() if line.strip()]
+
+
+def _head_of_lines(lines: list[str]) -> LedgerHead:
+    """The head these lines claim. Untrusted by construction — an appender chains onto
+    whatever it finds; only the pinned head decides whether that was the real history."""
+    if not lines:
+        return EMPTY_HEAD
+    return _head_after(_parse_entry(lines[-1]))
+
+
+def append[S: BaseModel](receipt: SignedReceipt[S], *, path: Path) -> LedgerHead:
+    """Append one receipt as the next link in the chain; return the ledger's NEW head.
+
+    Opened ``"a+"`` (``O_APPEND`` — every write lands at end-of-file) under an exclusive
+    advisory lock held across the read AND the write, so two concurrent appenders can
+    neither interleave a half-written line nor chain two entries onto one predecessor.
+
+    Pin the returned head somewhere the writer of this file cannot reach. Without it,
+    ``verify_integrity`` cannot tell this ledger from a truncated copy of it."""
+    with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        handle.write(receipt.model_dump_json() + "\n")
+        entry = _link_onto(_head_of_lines(_open_lines(handle)), receipt)
+        handle.write(entry.model_dump_json() + "\n")
+    return _head_after(entry)
 
 
 def _require_readable_file(path: Path) -> None:
@@ -67,10 +165,22 @@ def _require_readable_file(path: Path) -> None:
         raise LedgerUnreadable(f"ledger cannot be read (permission denied): {path}")
 
 
-def _parse_entry[S: BaseModel](line: str, receipt_type: type[SignedReceipt[S]]) -> SignedReceipt[S]:
-    """Parse one ledger line, reporting a coded cause instead of a parse traceback."""
+def read_entries(path: Path) -> tuple[LedgerEntry, ...]:
+    """Read every chained entry, failing closed if the ledger cannot be read.
+
+    Subject-agnostic: this is enough to walk the chain, never enough to check a
+    signature."""
+    _require_readable_file(path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return tuple(_parse_entry(line) for line in lines if line.strip())
+
+
+def _entry_receipt[S: BaseModel](
+    entry: LedgerEntry, receipt_type: type[SignedReceipt[S]]
+) -> SignedReceipt[S]:
+    """Parse an entry's receipt into the caller's concrete type."""
     try:
-        return receipt_type.model_validate_json(line)
+        return receipt_type.model_validate(entry.receipt)
     except ValidationError as exc:
         raise LedgerEntryMalformed(f"ledger entry is not a valid receipt: {exc}") from exc
 
@@ -79,9 +189,45 @@ def read_all[S: BaseModel](
     path: Path, receipt_type: type[SignedReceipt[S]]
 ) -> tuple[SignedReceipt[S], ...]:
     """Read every receipt from the ledger, failing closed if it cannot be read."""
-    _require_readable_file(path)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return tuple(_parse_entry(line, receipt_type) for line in lines if line.strip())
+    return tuple(_entry_receipt(entry, receipt_type) for entry in read_entries(path))
+
+
+def current_head(path: Path) -> LedgerHead:
+    """The head this FILE claims — derived from its own bytes, therefore not evidence.
+
+    Useful for recording the head after a batch of appends, and for modelling the
+    strongest attacker: one who rewrites the ledger *and* recomputes a self-consistent
+    chain over it. Verification must still reject that, because it is checked against
+    the head the operator pinned earlier, not against the file's own arithmetic."""
+    entries = read_entries(path)
+    return _head_after(entries[-1]) if entries else EMPTY_HEAD
+
+
+def _require_link(entry: LedgerEntry, position: int, prev_hash: str) -> None:
+    """Fail closed unless ``entry`` is the entry that belongs at ``position``."""
+    if entry.seq != position:
+        raise LedgerIntegrityError(
+            f"ledger entry at position {position} claims sequence {entry.seq}"
+        )
+    if entry.prev_hash != prev_hash:
+        raise LedgerIntegrityError(f"ledger entry {position} does not chain to the entry before it")
+
+
+def _verify_chain(entries: tuple[LedgerEntry, ...], expected_head: LedgerHead) -> None:
+    """Walk the chain from genesis and require it to end exactly at the pinned head.
+
+    The walk catches deletion, reordering, replay and splicing; the head comparison is
+    what catches truncation, which leaves a chain that is self-consistent but short."""
+    prev_hash = GENESIS_HASH
+    for position, entry in enumerate(entries):
+        _require_link(entry, position, prev_hash)
+        prev_hash = entry_hash(entry)
+    head = LedgerHead(count=len(entries), head_hash=prev_hash)
+    if head != expected_head:
+        raise LedgerIntegrityError(
+            f"ledger ends at {head.count} entries / {head.head_hash}, "
+            f"but the pinned head is {expected_head.count} entries / {expected_head.head_hash}"
+        )
 
 
 def _verify_entry[S: BaseModel](receipt: SignedReceipt[S], expected_public_key: str) -> None:
@@ -97,14 +243,45 @@ def _verify_entry[S: BaseModel](receipt: SignedReceipt[S], expected_public_key: 
 
 
 def verify_integrity[S: BaseModel](
-    path: Path, receipt_type: type[SignedReceipt[S]], *, expected_public_key: str
+    path: Path,
+    receipt_type: type[SignedReceipt[S]],
+    *,
+    expected_public_key: str,
+    expected_head: LedgerHead,
 ) -> tuple[SignedReceipt[S], ...]:
-    """Return all receipts, raising if any entry fails hash OR signature verification.
+    """Return all receipts, raising unless the chain ends at the pinned head AND every
+    entry passes hash + signature verification.
 
-    ``expected_public_key`` is the signer's public key, pinned out-of-band (the ``.pub``
-    from ``keygen``) — never read from an entry, whose embedded key an attacker could
-    swap. Verifying signatures, not just hashes, is what makes tamper-evidence real."""
-    receipts = read_all(path, receipt_type)
+    Both pins are read out-of-band and neither is ever taken from the file being
+    checked: ``expected_public_key`` (the ``.pub`` from ``keygen``) says *who* may write
+    entries, ``expected_head`` (from ``append``) says *which* entries there are. A
+    ledger that satisfies one and not the other is not verified.
+
+    Entries are checked before the chain purely for diagnostics: an edit *inside* a line
+    breaks that line's signature AND every link after it, and the per-entry failure is
+    the one that names which line went wrong."""
+    entries = read_entries(path)
+    receipts = tuple(_entry_receipt(entry, receipt_type) for entry in entries)
     for receipt in receipts:
         _verify_entry(receipt, expected_public_key)
+    _verify_chain(entries, expected_head)
     return receipts
+
+
+def save_head(head: LedgerHead, *, path: Path) -> None:
+    """Write a head for the operator to carry out-of-band.
+
+    Writing it *next to the ledger* is a convenience for copying it elsewhere, never a
+    control: anyone who can rewrite the ledger can rewrite a file beside it."""
+    path.write_text(head.model_dump_json() + "\n", encoding="utf-8")
+
+
+def read_head(path: Path) -> LedgerHead:
+    """Read a pinned head written by :func:`save_head`, failing closed if unusable.
+
+    A missing or malformed pin means the verifier has nothing to check against, which
+    is a failure — never a licence to verify the ledger against itself."""
+    try:
+        return LedgerHead.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as exc:
+        raise LedgerHeadUnreadable(f"pinned ledger head is unusable: {path}") from exc

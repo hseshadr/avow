@@ -23,21 +23,41 @@ from avow.keys import (
     save_public_key,
     save_signing_key,
 )
-from avow.ledger import append, read_all, verify_integrity
+from avow.ledger import (
+    EMPTY_HEAD,
+    LedgerEntry,
+    LedgerHead,
+    append,
+    current_head,
+    entry_hash,
+    read_all,
+    read_entries,
+    read_head,
+    save_head,
+    verify_integrity,
+)
 from avow.verify import verify_receipt
 
 __all__ = [
+    "EMPTY_HEAD",
+    "LedgerEntry",
+    "LedgerHead",
     "SignedReceipt",
     "__version__",
     "append",
     "canonical_bytes",
     "content_hash",
+    "current_head",
+    "entry_hash",
     "generate_signing_key",
     "load_signing_key",
     "payload_digest",
     "public_key_hex",
     "read_all",
+    "read_entries",
+    "read_head",
     "read_public_key",
+    "save_head",
     "save_public_key",
     "save_signing_key",
     "sign_payload",
