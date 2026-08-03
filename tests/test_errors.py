@@ -4,7 +4,9 @@ import pytest
 
 from assay.errors import (
     AssayError,
+    EmptyRelevantSet,
     InsufficientSamples,
+    InvalidRankingRequest,
     InvalidScoreRequest,
     ReplayRefused,
     ScoringExtraMissing,
@@ -26,6 +28,8 @@ from avow.errors import (
 # The scoring face keeps its own ``assay.*`` catalog under ``AssayError``.
 _ASSAY_CODES = [
     (InvalidScoreRequest, "assay.invalid_request"),
+    (InvalidRankingRequest, "assay.invalid_ranking_request"),
+    (EmptyRelevantSet, "assay.empty_relevant_set"),
     (UnknownMetric, "assay.unknown_metric"),
     (InsufficientSamples, "assay.insufficient_samples"),
     (ScoringExtraMissing, "assay.scoring_extra_missing"),

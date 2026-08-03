@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+- **A ranking face: `assay.ranking`, plus `assay.ranking_score` for a signed receipt.**
+  Everything in `metrics.py` scores `(y_true, y_score)` pairs, a shape with no notion of
+  *position* — a search engine that returns the right product tenth and one that returns
+  it first produce identical numbers. The new module scores a
+  `(relevance judgments, ranked list)` pair instead: `precision_at_k`, `recall_at_k`,
+  `f1_at_k`, `ndcg_at_k` (graded relevance, not just binary), `mrr`,
+  `average_precision` / `mean_average_precision`, and `ranking_report` for a whole query
+  set. The arithmetic is scikit-learn's (`ndcg_score`,
+  `label_ranking_average_precision_score`); Assay adds the `@k` forms sklearn does not
+  ship, the input adaptation from a ranked id list to sklearn's label matrix, and a
+  refusal on every input whose answer would be undefined.
+- **`ranking_report` carries an interval, or abstains.** Mean nDCG@k comes with a
+  bootstrap confidence interval over the per-query values, or an `Abstention` below
+  `AssaySettings.min_samples` — the same honesty floor the classification face uses, not
+  a second uncertainty story. Per-query rows are always returned alongside the means,
+  because the mean is the number that hides a broken query and the rows are the number
+  that names it.
+- **Two coded refusals: `assay.invalid_ranking_request` and `assay.empty_relevant_set`.**
+  An empty relevant set is refused rather than scored 0.0, because 0.0 reads as "the
+  ranker found nothing" and would blame the ranker for missing *judgments*. `k <= 0`, an
+  empty ranked list, the same document twice in one ranked list or judged twice in one
+  query, and a negative gain are all refused for the same reason: the answer would be
+  undefined, not merely small.
+- **`AssaySettings.ranking_k` (default 10)** — the cut-off is configuration, not a
+  literal in the logic, and whichever `k` applied is recorded in the receipt so a
+  reported precision@k always says which k it was.
+
 ### Changed
 - **BREAKING — `ReplayMismatch` is renamed `PayloadHashMismatch`, and its code
   `avow.replay_mismatch` becomes `avow.payload_hash_mismatch`.** The error fired on a
