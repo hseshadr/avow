@@ -1,5 +1,55 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **A mutation harness, `scripts/mutation_harness.py`, run with `uv run poe mutants`.**
+  The ranking face's red runs existed only as prose in a commit message, so no reader
+  could re-run them — and a guard nobody can watch fail is not evidence. The harness
+  breaks 18 named guards one at a time, requires the suite to go red, and restores the
+  file. **Its verdict is the pytest exit code and nothing else**: `0` all passed, `1` a
+  test failed, and every other code (`4` usage error, `5` nothing collected) gets its own
+  name and fails the run. A harness elsewhere in this portfolio once grepped stdout for
+  failures, read a crashed runner as "no failures", and reported all 12 of its mutations
+  green. Each mutation is also read back off disk before its verdict is trusted, so an
+  edit that silently did not apply cannot be scored as a guard that held.
+  It covers: the ranking metrics being `trec_eval`'s arithmetic through `ir_measures`
+  rather than a reimplementation (the ranked order, the cut-off `k`, and graded gains all
+  proven to reach the engine); every ranking refusal; the envelope re-deriving the payload
+  hash and pinning the signer; the ledger's chain / count / signature checks as three
+  separate guards; and the numeric literals the README states out loud.
+- **A test the harness found missing: `test_should_reject_a_ledger_whose_chain_link_was_rewritten`.**
+  Deleting the chain-link check left the whole suite green. The existing splice test
+  survived it because a spliced entry also changes the entry count, so the pinned-head
+  check caught it first — the chain walk was defended only in depth and had no case that
+  isolated it. The new test rewrites an interior entry's `prev_hash` and nothing else:
+  the last entry is untouched so the pinned head still matches on count *and* hash, and
+  `prev_hash` sits outside the signed receipt so every signature still verifies. Only the
+  chain walk can object, and now something checks that it does.
+- **`tests/test_documented_constants.py`, pinning literals to the literal.** A constant
+  asserted only against its own source is unguarded. `test_vectors.py` asserted `>= 8`
+  canonicalization vectors and `>= 1` receipts — loose bounds on shape that stay green
+  while three vectors go missing and the README keeps promising 12. The new file pins 9,
+  3 and 12, and pins the documented ranking cut-off of 10. Neither existing assertion was
+  touched.
+- **`.github/dependabot.yml` (github-actions, weekly).** assay had no Dependabot config,
+  which is why it was the only repo in the portfolio still on `astral-sh/setup-uv` v8.3.2
+  while everything else moved to v9.0.0: a SHA pin does not move on its own and nothing
+  was opening the bump PR.
+- **A `mutation-gate` CI job**, so the evidence is regenerated on every pull request
+  rather than captured once. It is deliberately not a step inside `gate`: `gate` asks
+  whether the tests pass, `mutants` asks whether they can fail.
+
+### Changed
+- `astral-sh/setup-uv` bumped to **v9.0.0** in `ci.yml` and `security-audit.yml`. The
+  comment beside each pin names the exact version (`# v9.0.0`), never a floating `# v9` —
+  a floating-major comment turned another repo's `main` red the day upstream re-pointed
+  its tag.
+- The gate now covers `scripts/` too (ruff, ruff-format, mypy `--strict`, xenon A). The
+  harness that proves the guards can fail is not exempt from the gate that guards them.
+- README `Status` corrected: it still claimed 220 tests and `avow` 0.2.0 as the published
+  release. It is 258 tests and 0.3.0.
+
 ## [0.3.0] - 2026-08-03
 
 Adds the ranking face and renames the envelope's one misnamed error. Pair-versioned with

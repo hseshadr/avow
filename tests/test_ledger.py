@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from avow.errors import (
 )
 from avow.ledger import (
     EMPTY_HEAD,
+    GENESIS_HASH,
     LedgerHead,
     append,
     current_head,
@@ -364,6 +366,29 @@ def test_should_reject_an_entry_spliced_in_from_another_ledger(tmp_path: Path) -
     # Then it must fail: a signature binds an entry to a signer, never to a ledger
     with pytest.raises(LedgerIntegrityError):
         _verify(production, head)
+
+
+def test_should_reject_a_ledger_whose_chain_link_was_rewritten(tmp_path: Path) -> None:
+    # Given a 3-entry ledger whose MIDDLE entry has had its prev_hash rewritten and
+    # nothing else touched. This is the one edit the other two pins cannot see: the last
+    # entry is untouched, so the pinned head still matches on count AND hash, and
+    # prev_hash lives outside the signed receipt, so every signature still verifies.
+    path = tmp_path / "ledger.jsonl"
+    head = _ledger_of(path, 0.1, 0.2, 0.3)
+    lines = _lines(path)
+    middle = json.loads(lines[1])
+    middle["prev_hash"] = GENESIS_HASH
+    _rewrite(path, [lines[0], json.dumps(middle), lines[2]])
+    # Then the pinned head still matches this file exactly — the head pin really is
+    # blind here, which is why the chain walk has to be its own check and not a
+    # restatement of the head ...
+    assert current_head(path) == head
+    # ... and verification still fails, at the link, because the chain is walked entry by
+    # entry from genesis rather than inferred from the last line. Without this case the
+    # chain walk is defended only in depth: the splice test above passes on a build with
+    # the link check deleted, because the head pin catches the extra entry first.
+    with pytest.raises(LedgerIntegrityError, match="does not chain to the entry before it"):
+        _verify(path, head)
 
 
 # ---------------------------------------------------------------------------
