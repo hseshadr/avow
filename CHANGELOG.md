@@ -1,6 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-08-03
+
+Adds the ranking face and renames the envelope's one misnamed error. Pair-versioned with
+`@edgeproc/avow` on npm; `@edgeproc/receipt-ui` is versioned separately.
+
+**Why this release exists.** `assay.ranking` merged after the `v0.2.0` tag, so it shipped
+in no release at all — PyPI `avow` 0.2.0 has neither the module nor `ir-measures` in its
+metadata. The first consumer had to pin `avow` to a git merge commit by full SHA to reach
+it, and a URL requirement cannot be resolved to a version, so that consumer's dependency
+audit skipped `avow` entirely: *"URL requirements cannot be pinned to a specific package
+version."* A CVE against `avow` or its transitive dependencies would have gone unseen for
+as long as that pin stood. Publishing is what closes it — the consumer moves back to a
+PyPI range, `avow[assay]>=0.3.0`, and its audit sees the package again.
+
+**A note on version strings.** A git checkout of the merge commit reports `0.2.0`, the
+same string as the published artifact that does *not* contain this code. The version
+string was never the identity here; the release is.
 
 ### Added
 - **A ranking face: `assay.ranking`, plus `assay.ranking_score` for a signed receipt.**
@@ -10,10 +26,29 @@
   `(relevance judgments, ranked list)` pair instead: `precision_at_k`, `recall_at_k`,
   `f1_at_k`, `ndcg_at_k` (graded relevance, not just binary), `mrr`,
   `average_precision` / `mean_average_precision`, and `ranking_report` for a whole query
-  set. The arithmetic is scikit-learn's (`ndcg_score`,
-  `label_ranking_average_precision_score`); Assay adds the `@k` forms sklearn does not
-  ship, the input adaptation from a ranked id list to sklearn's label matrix, and a
-  refusal on every input whose answer would be undefined.
+  set. The arithmetic is **`trec_eval`'s, reached through `ir_measures`** — trec_eval is
+  the reference implementation the IR field validates its own numbers against, so every
+  metric here is the field's definition rather than assay's reading of it. Assay
+  contributes the two things trec_eval does not: a Python-native
+  `(judgments, ranked list)` contract in place of its qrels/run file pair, and a refusal
+  on every input whose answer would be undefined.
+- **New runtime dependency `ir-measures>=0.4.3`, under the `avow[assay]` extra** — not
+  the base install, which stays the envelope only (pydantic, pynacl, rfc8785) so
+  `pip install avow` and micropip in Pyodide never pull the scientific stack. It carries
+  exactly one transitive dependency, `pytrec-eval-terrier` — the C++ binding to trec_eval
+  itself — whose own dependencies are numpy and scipy, already pinned in the same extra.
+- **Why not scikit-learn: the adapter code was the tell.** `ndcg_score` and
+  `label_ranking_average_precision_score` are multilabel-**classification** metrics.
+  Neither has any notion of a relevant document that was never retrieved, so both had to
+  be talked into retrieval semantics at the boundary: nDCG by padding the positions the
+  ranker left empty and parking missed documents below every filled one; average
+  precision by rescaling LRAP by `|relevant retrieved| / |relevant|` to undo its habit of
+  dividing by the labels it was handed — **without which, retrieving 1 of 4 relevant
+  documents scored 1.0**. Those were two hand-written semantic corrections wrapped around
+  a mismatched engine, and a subtle error in either would have silently corrupted every
+  number downstream. Both are deleted; trec_eval has these semantics natively. Maturity
+  was never the question — scikit-learn is impeccably mature and was still the wrong
+  engine for this field.
 - **`ranking_report` carries an interval, or abstains.** Mean nDCG@k comes with a
   bootstrap confidence interval over the per-query values, or an `Abstention` below
   `AssaySettings.min_samples` — the same honesty floor the classification face uses, not
