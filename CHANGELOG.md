@@ -2,11 +2,73 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-05
+
 ### Added
+- **An agreement face: `assay.agreement`, plus `assay.agreement_score` for a signed
+  receipt.** Everything else in the package scores predictions against ground truth. This
+  scores two *raters* against each other, when what they emit is a band on an ordered
+  scale (weak / moderate / strong) and there is no ground truth to score against — nobody
+  knows the true band, only whether two graders landed in the same place.
+
+  Percent agreement is the wrong statistic for that shape, twice over. It is blind to
+  *distance*: "strong vs moderate" is a near miss and "strong vs weak" is a total miss,
+  and it scores both as simply not-a-match. And it counts agreement that chance alone
+  would produce: two graders who both call 90% of everything "weak" match about 80% of the
+  time while agreeing about nothing. The module ships `quadratic_kappa`
+  (quadratic-weighted Cohen's kappa), `kendall_tau_b`, `percent_agreement` and
+  `weighted_agreement` as primitives, and `agreement_report` for a whole item set.
+
+  The arithmetic is **scikit-learn's and scipy's** — `cohen_kappa_score(weights=
+  "quadratic")` and `kendalltau(variant="b")`, both already pinned dependencies, both the
+  reference implementation their field validates against, and neither needing a line of
+  correction at the boundary. Assay contributes what they do not: a band order the caller
+  *declares*, a refusal for every input whose answer would be undefined, and the same
+  bootstrap-with-an-abstention-floor the classification and ranking faces already use.
+
+  The two statistics answer different questions and the report carries both. Two graders
+  who agree on every *ordering* but sit one band apart on the level score tau-b 1.0 and
+  kappa 2/3; a report with only one of those numbers is missing the other half.
+- **`quadratic_kappa` takes the band order from the caller, never from `sorted()`.**
+  `cohen_kappa_score` reads the ordinal distance between two bands off their positions in
+  its `labels` argument. Omit that argument and it sorts the band names, so
+  weak/moderate/strong silently becomes moderate < strong < weak — and the same ratings
+  come back as +2/3 instead of -1/3. Both numbers look entirely plausible. There is a
+  mutation for exactly this edit, and `tests/test_agreement.py` pins both values so the
+  wrong one cannot pass for the right one.
+- **Confusion counts and a named false-negative rate in `assay.metrics`.**
+  `precision_recall_fscore_support` was being called with `average="binary"` and its
+  support discarded, so the package had recall but no confusion counts at all — and a rate
+  hides which way a system fails, because 200 misses with 2 false alarms scores the same
+  accuracy as 2 misses with 200 false alarms. `confusion_counts` returns TP / FP / TN / FN
+  as named cells and `false_negative_rate` returns the miss rate. It is exactly
+  `1 - recall` and it is named anyway: a screening system is judged on its misses, and
+  nobody reads a 3% miss rate off a recall of 0.97. Additive — `binary_scores` keeps its
+  signature and now also carries `counts` and `false_negative_rate`, and the receipt's
+  `ClassificationDetail` carries them too.
+- **Refusals that stop scikit-learn from silently dropping rows.** sklearn discards, with
+  no warning, any row whose label falls outside the `labels=` argument it was given. Two
+  places in this release hand sklearn a `labels=`, so two refusals exist to make that
+  safe: a rating naming a band the scale does not declare, and a classification label
+  outside `{0, 1}`. Without them the number comes back looking perfectly healthy,
+  computed over fewer items than the caller handed in. Both have a mutation.
+- **Degenerate rating sets report UNDEFINED, never 1.0.** When both raters put every item
+  in the same single band, percent agreement is a truthful 100% and kappa has no
+  denominator — chance agreement is also total. `quadratic_kappa` returns `None` there
+  rather than the flattering 1.0, and `AgreementReport` carries a
+  `kappa_undefined_reason` sentence beside it, because a bare `None` reads as "not
+  computed" when the fact is "cannot exist". `kendall_tau_b` does the same whenever
+  *either* rater used one band throughout.
+- **Ten more mutations, 18 -> 28.** The band order reaching kappa, the quadratic weighting
+  (unweighted kappa scores a near-miss grader pair and a total-miss grader pair
+  identically — that blindness is the whole reason the weighting exists), tau-b's tie
+  correction, both new refusals, the undefined-not-perfect rule, the confusion-cell read
+  order, and the FNR's denominator.
+- **A new coded error, `InvalidAgreementRequest` (`assay.invalid_agreement_request`).**
 - **A mutation harness, `scripts/mutation_harness.py`, run with `uv run poe mutants`.**
   The ranking face's red runs existed only as prose in a commit message, so no reader
   could re-run them — and a guard nobody can watch fail is not evidence. The harness
-  breaks 18 named guards one at a time, requires the suite to go red, and restores the
+  breaks 28 named guards one at a time, requires the suite to go red, and restores the
   file. **Its verdict is the pytest exit code and nothing else**: `0` all passed, `1` a
   test failed, and every other code (`4` usage error, `5` nothing collected) gets its own
   name and fails the run. A harness elsewhere in this portfolio once grepped stdout for
@@ -41,6 +103,10 @@
   whether the tests pass, `mutants` asks whether they can fail.
 
 ### Changed
+- `ClassificationDetail` in a receipt gains `false_negative_rate` and `confusion`.
+  `ReceiptPayload` gains an optional `agreement` detail. The golden cross-language vectors
+  are unaffected: they carry their own subject model, not `assay.ReceiptPayload`.
+
 - `astral-sh/setup-uv` bumped to **v9.0.0** in `ci.yml` and `security-audit.yml`. The
   comment beside each pin names the exact version (`# v9.0.0`), never a floating `# v9` —
   a floating-major comment turned another repo's `main` red the day upstream re-pointed
@@ -48,7 +114,8 @@
 - The gate now covers `scripts/` too (ruff, ruff-format, mypy `--strict`, xenon A). The
   harness that proves the guards can fail is not exempt from the gate that guards them.
 - README `Status` corrected: it still claimed 220 tests and `avow` 0.2.0 as the published
-  release. It is 258 tests and 0.3.0.
+  release. It was 258 tests and 0.3.0 when that correction landed; this release makes it
+  298 tests and 0.4.0.
 
 ## [0.3.0] - 2026-08-03
 
