@@ -6,6 +6,7 @@ from assay.errors import (
     AssayError,
     EmptyRelevantSet,
     InsufficientSamples,
+    InvalidAgreementRequest,
     InvalidRankingRequest,
     InvalidScoreRequest,
     ReplayRefused,
@@ -29,6 +30,7 @@ from avow.errors import (
 _ASSAY_CODES = [
     (InvalidScoreRequest, "assay.invalid_request"),
     (InvalidRankingRequest, "assay.invalid_ranking_request"),
+    (InvalidAgreementRequest, "assay.invalid_agreement_request"),
     (EmptyRelevantSet, "assay.empty_relevant_set"),
     (UnknownMetric, "assay.unknown_metric"),
     (InsufficientSamples, "assay.insufficient_samples"),
