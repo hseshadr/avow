@@ -13,7 +13,8 @@ Two independent checks, because they answer two different questions:
   hash; the detached signature is the thing they cannot forge.
 * **Across entries** — the chain walk. Every entry's ``prev_hash`` must equal the hash
   of the entry before it and its ``seq`` must equal its position, so deleting,
-  reordering, replaying or splicing in a foreign entry breaks a link. This answers
+  reordering, reinserting an encoded line or splicing in a foreign entry breaks a link.
+  This answers
   "are these the lines, in this order?", which no per-line signature ever can: a
   signature binds an entry to a signer, never to a ledger or to a position in one.
 
@@ -48,13 +49,14 @@ import os
 import stat
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from avow._atomic import sync_directory
 from avow.canonical import JsonValue, content_hash
 from avow.envelope import SignedReceipt, payload_digest
 from avow.errors import (
@@ -198,12 +200,12 @@ def _current_locked_head(handle: TextIO) -> LedgerHead:
     return EMPTY_HEAD if line is None else _head_after(_parse_entry(line))
 
 
-def _acquire_lock(handle: TextIO, timeout_seconds: float) -> None:
+def _acquire_lock(descriptor: int, timeout_seconds: float) -> None:
     """Take the ledger lock or fail with a stable code at the bounded deadline."""
     deadline = time.monotonic() + timeout_seconds
     while True:
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return
         except BlockingIOError as exc:
             remaining = deadline - time.monotonic()
@@ -222,47 +224,42 @@ def _require_bounded_timeout(timeout_seconds: float) -> None:
 
 @contextmanager
 def _locked_ledger(path: Path, timeout_seconds: float) -> Iterator[TextIO]:
-    """Open the append-only ledger and hold its process lock for the caller."""
+    """Open and lock the ledger file using the protocol shipped before 0.4.1."""
     _require_bounded_timeout(timeout_seconds)
     with path.open("a+", encoding="utf-8") as handle:
-        _acquire_lock(handle, timeout_seconds)
+        _acquire_lock(handle.fileno(), timeout_seconds)
         try:
             yield handle
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _sync_directory(path: Path) -> None:
-    """Persist a directory entry or replacement on an in-scope local filesystem."""
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _append_locked[S: BaseModel](
-    receipt: SignedReceipt[S], *, handle: TextIO, path: Path
-) -> LedgerHead:
-    """Append and durably flush while the caller holds the ledger lock."""
-    current = _current_locked_head(handle)
+def _prepare_append[S: BaseModel](
+    receipt: SignedReceipt[S], current: LedgerHead, size: int
+) -> tuple[LedgerEntry, bytes]:
+    """Validate and encode an append before any transaction artifact is installed."""
     entry = _link_onto(current, receipt)
     encoded = (entry.model_dump_json() + "\n").encode()
-    _require_append_limits(handle, current, encoded)
+    _require_append_limits(size, current, encoded)
+    return entry, encoded
+
+
+def _commit_append(entry: LedgerEntry, encoded: bytes, handle: TextIO, path: Path) -> LedgerHead:
+    """Append and durably flush one fully prepared entry under the caller's lock."""
     handle.buffer.write(encoded)
     handle.flush()
     os.fsync(handle.fileno())
-    _sync_directory(path.parent)
+    sync_directory(path.parent)
     return _head_after(entry)
 
 
-def _require_append_limits(handle: TextIO, head: LedgerHead, encoded: bytes) -> None:
+def _require_append_limits(size: int, head: LedgerHead, encoded: bytes) -> None:
     """Reject any append that would cross a declared support ceiling."""
     if head.count >= MAX_LEDGER_ENTRIES:
         raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_ENTRIES} entries")
     if len(encoded) > MAX_LEDGER_LINE_BYTES:
         raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
-    if os.fstat(handle.fileno()).st_size + len(encoded) > MAX_LEDGER_BYTES:
+    if size + len(encoded) > MAX_LEDGER_BYTES:
         raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_BYTES} bytes")
 
 
@@ -277,7 +274,9 @@ def append[S: BaseModel](
     Export the returned head beyond the ledger writer; otherwise truncation is not
     detectable. See ``docs/OPERATIONS.md`` for failure and recovery bounds."""
     with _locked_ledger(path, lock_timeout_seconds) as handle:
-        return _append_locked(receipt, handle=handle, path=path)
+        current = _current_locked_head(handle)
+        entry, encoded = _prepare_append(receipt, current, os.fstat(handle.fileno()).st_size)
+        return _commit_append(entry, encoded, handle, path)
 
 
 def _regular_file_size(handle: BinaryIO, path: Path) -> int:
@@ -375,10 +374,7 @@ def _require_link(entry: LedgerEntry, position: int, prev_hash: str) -> None:
 
 
 def _verify_chain(entries: tuple[LedgerEntry, ...], expected_head: LedgerHead) -> None:
-    """Walk the chain from genesis and require it to end exactly at the pinned head.
-
-    The walk catches deletion, reordering, replay and splicing; the head comparison is
-    what catches truncation, which leaves a chain that is self-consistent but short."""
+    """Walk every link and require the chain to end exactly at its pinned head."""
     prev_hash = GENESIS_HASH
     for position, entry in enumerate(entries):
         _require_link(entry, position, prev_hash)
@@ -438,7 +434,7 @@ def _install_head(head: LedgerHead, path: Path) -> None:
     staged = _stage_head(head, path)
     try:
         os.replace(staged, path)
-        _sync_directory(path.parent)
+        sync_directory(path.parent)
     except OSError as exc:
         staged.unlink(missing_ok=True)
         raise LedgerHeadWriteFailed(f"could not durably write ledger head: {path}") from exc
@@ -534,13 +530,54 @@ def append_and_save_head[S: BaseModel](
     lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> LedgerHead:
     """Append and save a matching pin, or require recovery, under one bounded lock."""
+    return _append_and_save_head_with_install(
+        receipt, path=path, head_path=head_path, lock_timeout_seconds=lock_timeout_seconds
+    )
+
+
+def _append_and_save_head_with_install[S: BaseModel](
+    receipt: SignedReceipt[S],
+    *,
+    path: Path,
+    head_path: Path,
+    lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+    install: Callable[[], None] | None = None,
+) -> LedgerHead:
+    """Internal CLI transaction that installs one staged peer before append."""
     require_distinct_paths((path, head_path))
     with _locked_ledger(path, lock_timeout_seconds) as handle:
         require_distinct_paths((path, head_path))
-        _require_current_pin(_current_locked_head(handle), head_path)
-        head = _append_locked(receipt, handle=handle, path=path)
-        save_head(head, path=head_path)
-        return head
+        return _combined_existing(receipt, handle, path, head_path, install)
+
+
+def _run_install(install: Callable[[], None] | None) -> None:
+    """Install one prepared peer artifact at the transaction serialization point."""
+    if install is not None:
+        install()
+
+
+def _finish_combined(
+    entry: LedgerEntry, encoded: bytes, handle: TextIO, path: Path, pin: Path
+) -> LedgerHead:
+    """Commit the ledger entry followed by its convenience pin."""
+    head = _commit_append(entry, encoded, handle, path)
+    save_head(head, path=pin)
+    return head
+
+
+def _combined_existing[S: BaseModel](
+    receipt: SignedReceipt[S],
+    handle: TextIO,
+    path: Path,
+    pin: Path,
+    install: Callable[[], None] | None,
+) -> LedgerHead:
+    """Commit against an existing ledger only after its current pin matches."""
+    current = _current_locked_head(handle)
+    _require_current_pin(current, pin)
+    entry, encoded = _prepare_append(receipt, current, os.fstat(handle.fileno()).st_size)
+    _run_install(install)
+    return _finish_combined(entry, encoded, handle, path, pin)
 
 
 def read_head(path: Path) -> LedgerHead:

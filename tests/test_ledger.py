@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import inspect
 import json
 import multiprocessing
 import os
@@ -26,6 +27,7 @@ from avow.ledger import (
     EMPTY_HEAD,
     GENESIS_HASH,
     LedgerHead,
+    _append_and_save_head_with_install,
     _decode_entry_line,
     _decode_last_line,
     _same_parent,
@@ -125,6 +127,23 @@ def test_should_return_a_head_that_advances_with_every_append(tmp_path: Path) ->
     assert len(_verify(path, second)) == 2
 
 
+def test_resubmitting_one_signed_receipt_creates_a_new_valid_ledger_entry(
+    tmp_path: Path,
+) -> None:
+    # Given one genuine signed receipt submitted twice through the append API
+    ledger = tmp_path / "ledger.jsonl"
+    receipt = _receipt(0.1)
+    append(receipt, path=ledger)
+    head = append(receipt, path=ledger)
+    # Then both submissions are valid, newly sequenced entries: semantic caller replay
+    # needs a nonce/request ID and caller state rather than an encoded-line chain check.
+    assert _verify(ledger, head) == (receipt, receipt)
+
+
+def test_public_combined_append_signature_has_no_cli_install_callback() -> None:
+    assert "install" not in inspect.signature(append_and_save_head).parameters
+
+
 def test_should_serialize_ledger_and_saved_head_across_real_processes(tmp_path: Path) -> None:
     # Given four independent writers sharing one ledger and one convenience pin
     ledger = tmp_path / "ledger.jsonl"
@@ -159,7 +178,35 @@ def test_should_time_out_with_a_coded_error_when_another_process_holds_lock(
     # When append reaches its 50ms timeout, it fails without writing or deadlocking
     with pytest.raises(LedgerLockTimeout, match=r"0\.050"):
         append(_receipt(0.1), path=ledger, lock_timeout_seconds=0.05)
-    assert ledger.read_text(encoding="utf-8") == ""
+    assert ledger.read_bytes() == b""
+    release.set()
+    holder.join(timeout=5)
+    assert holder.exitcode == 0
+
+
+def test_cli_transaction_honours_the_legacy_data_file_lock(tmp_path: Path) -> None:
+    # Given a 0.4.0-compatible process holds the ledger file's documented flock
+    ledger, pin = tmp_path / "ledger.jsonl", tmp_path / "ledger.head"
+    ledger.touch()
+    save_head(EMPTY_HEAD, path=pin)
+    context = multiprocessing.get_context("spawn")
+    ready, release = context.Event(), context.Event()
+    holder = context.Process(target=_hold_ledger_lock, args=(ledger, ready, release))
+    holder.start()
+    assert ready.wait(timeout=5)
+    installed: list[bool] = []
+    # When the 0.4.1 CLI transaction attempts to extend that same ledger
+    with pytest.raises(LedgerLockTimeout):
+        _append_and_save_head_with_install(
+            _receipt(0.1),
+            path=ledger,
+            head_path=pin,
+            lock_timeout_seconds=0.05,
+            install=lambda: installed.append(True),
+        )
+    # Then it times out before output installation rather than splitting protocols
+    assert installed == []
+    assert ledger.read_bytes() == b""
     release.set()
     holder.join(timeout=5)
     assert holder.exitcode == 0

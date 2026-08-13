@@ -24,6 +24,20 @@
   This includes exact paths, hard links, symlinks, aliasing parent directories, and
   case/Unicode names the destination volume treats as identical; rejected commands
   preserve existing request, key, receipt, ledger, and head bytes.
+- `assay score` stages and installs its receipt inside the same serialization boundary
+  as ledger/head persistence. An output failure no longer commits a ledger entry, and
+  concurrent writers sharing one output cannot publish an older receipt last. The
+  three files remain separate crash commits and recovery stays fail closed.
+- `keygen` stages and syncs both owner-only key artifacts, uses race-safe no-overwrite
+  claims, and
+  refuses to overwrite either destination. A failed second installation rolls back the
+  first rather than destroying an existing signing identity. The public single-file key
+  helpers and composite receipt output now use synced atomic replacements.
+  A replacement followed by directory-sync failure reports an explicitly unknown
+  old-or-new complete-file outcome; partial bytes are never installed.
+- The ledger continues to lock the data-file descriptor used by 0.4.0, preserving
+  mixed-version writer serialization during rolling upgrades. No public append API
+  gained a callback or CLI-specific transaction parameter.
 - A combined ledger/head append now requires its existing convenience pin to match the
   locked ledger state before writing. A stale, malformed, or missing pin on a non-empty
   ledger raises `avow.ledger_recovery_required`, so a later successful command cannot
@@ -74,6 +88,9 @@
   runtime source and mutation tooling.
 - README now links the operational contract at the runnable quickstart and states the
   0.4.0 supersession without publishing a procedural abuse recipe.
+- Documentation now distinguishes encoded ledger-line reinsertion from submitting the
+  same signed receipt twice through `append`. The latter creates two valid sequenced
+  entries; semantic replay prevention requires a caller-owned nonce/request ID and state.
 
 ## [0.4.0] - 2026-08-13
 

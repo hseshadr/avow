@@ -22,5 +22,6 @@ def verify_receipt[SubjectT: BaseModel](
 
     Proves **who signed it** and **that it is unmodified**. Does NOT prove freshness or
     that the receipt has not been presented before — a replayed receipt is byte-identical
-    to the original and verifies. Use ``avow.ledger`` for replay defence."""
+    to the original and verifies. A ledger detects encoded-line reinsertion, while
+    semantic replay needs caller-owned nonce/request-ID state."""
     verify_signature(receipt, expected_public_key=expected_public_key)
