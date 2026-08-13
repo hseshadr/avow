@@ -79,7 +79,7 @@ def _join(workers: list[BaseProcess]) -> None:
 def _aggregate(results: list[Path], completion: float) -> Stats:
     batches = [SampleBatch.model_validate_json(path.read_text()) for path in results]
     samples = [value for batch in batches for value in batch.samples_ms]
-    peak = max(batch.peak_rss_mib for batch in batches)
+    peak = max(peak_rss_mib(), *(batch.peak_rss_mib for batch in batches))
     return stats(samples, completion).model_copy(update={"peak_rss_mib": peak})
 
 

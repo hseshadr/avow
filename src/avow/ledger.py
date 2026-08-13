@@ -483,10 +483,12 @@ def _paths_alias(left: Path, right: Path) -> bool:
         raise LedgerConfigurationInvalid("ledger persistence paths could not be resolved") from exc
 
 
-def _require_distinct_paths(ledger: Path, head: Path) -> None:
-    """Protect the append log from replacement by its convenience head."""
-    if _paths_alias(ledger, head):
-        raise LedgerConfigurationInvalid("ledger and head must use distinct paths")
+def require_distinct_paths(paths: tuple[Path, ...]) -> None:
+    """Reject filesystem aliases across persistence roles before any write."""
+    for index, left in enumerate(paths):
+        for right in paths[index + 1 :]:
+            if _paths_alias(left, right):
+                raise LedgerConfigurationInvalid("persistence roles must use distinct paths")
 
 
 def append_and_save_head[S: BaseModel](
@@ -497,9 +499,9 @@ def append_and_save_head[S: BaseModel](
     lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> LedgerHead:
     """Append and save its convenience pin under one bounded process lock."""
-    _require_distinct_paths(path, head_path)
+    require_distinct_paths((path, head_path))
     with _locked_ledger(path, lock_timeout_seconds) as handle:
-        _require_distinct_paths(path, head_path)
+        require_distinct_paths((path, head_path))
         head = _append_locked(receipt, handle=handle, path=path)
         save_head(head, path=head_path)
         return head

@@ -20,11 +20,15 @@
   `avow.ledger_lock_timeout`, rather than waiting forever. A head that cannot be
   durably installed raises `avow.ledger_head_write_failed`; it never reports success.
 - Invalid persistence configurations fail before writing: lock timeouts must be finite
-  and non-negative, and the ledger and convenience head must use distinct paths.
+  and non-negative, and every CLI read/write role must use a filesystem-distinct path.
+  This includes exact paths, hard links, symlinks, aliasing parent directories, and
+  case/Unicode names the destination volume treats as identical; rejected commands
+  preserve existing request, key, receipt, ledger, and head bytes.
 - CLI validation and domain failures now emit only a stable code and safe schema field
   path; settings are resolved only inside that boundary, so malformed `ASSAY_*`
-  environment values cannot leak through import-time tracebacks or help output.
-  Raw exception messages and caller-controlled values never enter CLI output.
+  environment values cannot leak through import-time tracebacks or help output. The
+  installed entry point also redacts parser errors before command dispatch, so rejected
+  arbitrary tokens never enter CLI output.
 - Append now reads only one bounded tail entry rather than the whole ledger. Read,
   append, and verification enforce 64 MiB, 100,000-entry, and 64 KiB-line limits with
   `avow.ledger_limit_exceeded`; the concurrency benchmark starts from 5,000 entries.
@@ -50,7 +54,8 @@
   RSS ceilings for Python signing/verification, TypeScript signing/verification,
   10,000-example classification, and a 200-append/four-process ledger run. The gate is
   `uv run poe benchmark` plus `pnpm --dir ts benchmark`; a missed count, integrity
-  check, time, or memory ceiling exits non-zero.
+  check, time, or memory ceiling exits non-zero. Ledger peak RSS is the maximum across
+  parent verification and every real append worker, not only the workers.
 - Executable privacy guards prove representative Python scoring/signing opens no
   socket and creates no hidden persistence, and scan the TypeScript runtime for browser
   egress/storage primitives.
