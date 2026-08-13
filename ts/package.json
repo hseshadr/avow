@@ -5,7 +5,7 @@
     "access": "public"
   },
   "type": "module",
-  "description": "Browser-side Avow envelope: RFC-8785 canonical bytes + Ed25519 sign/verify, byte-compatible with the Python avow kernel.",
+  "description": "Browser-side Avow trust kernel: RFC-8785 canonical bytes + Ed25519 sign/verify, plus recall@k / MRR / confusion-set metrics — all kept identical to the Python avow+assay faces by shared golden vectors.",
   "keywords": [
     "ed25519",
     "rfc8785",
@@ -19,7 +19,14 @@
     "audit-log",
     "cryptography",
     "browser",
-    "typescript"
+    "typescript",
+    "metrics",
+    "recall-at-k",
+    "precision-at-k",
+    "mrr",
+    "confusion-matrix",
+    "information-retrieval",
+    "evaluation"
   ],
   "license": "MIT",
   "author": "Harish Seshadri",

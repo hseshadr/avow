@@ -1,0 +1,300 @@
+{
+  "note": [
+    "Shared metric vectors: the cross-language ANSWER contract, replayed by both",
+    "tests/test_metric_vectors.py (Python) and ts/src/metricVectors.test.ts (TypeScript).",
+    "",
+    "Unlike canonical.json and receipts.json, this file is NOT generated. Those hold bytes",
+    "and signatures nobody can compute by hand, so a generator is the only way to author",
+    "them. Every number here was computed by hand from the metric's definition -- the",
+    "'hand' field on each case shows the arithmetic -- and then checked against the Python",
+    "implementation. Generating it from the code under test would make it a transcript of",
+    "whatever that code currently returns, which is exactly the shape of test that stays",
+    "green through the bug it exists to catch.",
+    "",
+    "Python and TypeScript reach these answers by different routes: Python delegates to",
+    "trec_eval (via ir_measures) and scikit-learn, TypeScript counts them out against the",
+    "definitions. That is precisely why the pin has to exist. A divergence fails CI in",
+    "both languages rather than being discovered later by a human."
+  ],
+  "ranking": [
+    {
+      "name": "mixed_hits_at_3",
+      "hand": "top-3 of (d1,d2,d3,d4,d5) holds d1 and d3. P=2/3. R=2/4 (denominator is the relevant SET of 4, never k). F1=2*(2/3)*(1/2)/((2/3)+(1/2))=(2/3)/(7/6). First hit is d1 at rank 1, so RR=1/1.",
+      "relevant": { "d1": 1, "d3": 1, "d5": 1, "d9": 1 },
+      "ranked": ["d1", "d2", "d3", "d4", "d5"],
+      "k": 3,
+      "expected": {
+        "precision_at_k": 0.6666666666666666,
+        "recall_at_k": 0.5,
+        "f1_at_k": 0.5714285714285715,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "name": "k_exceeds_the_returned_list",
+      "hand": "5 documents returned, k=10. 3 of the 4 relevant ones are in the list. P=3/10 -- the denominator is k, NOT min(k,5); the 5 positions the ranker never filled are charged for. R=3/4.",
+      "relevant": { "d1": 1, "d3": 1, "d5": 1, "d9": 1 },
+      "ranked": ["d1", "d2", "d3", "d4", "d5"],
+      "k": 10,
+      "expected": {
+        "precision_at_k": 0.3,
+        "recall_at_k": 0.75,
+        "f1_at_k": 0.42857142857142855,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "name": "first_hit_at_rank_three",
+      "hand": "the only relevant document x3 sits third. RR=1/3. P@4=1/4. R@4=1/1 -- the single relevant document was found.",
+      "relevant": { "x3": 1 },
+      "ranked": ["x1", "x2", "x3", "x4"],
+      "k": 4,
+      "expected": {
+        "precision_at_k": 0.25,
+        "recall_at_k": 1.0,
+        "f1_at_k": 0.4,
+        "reciprocal_rank": 0.3333333333333333
+      }
+    },
+    {
+      "name": "nothing_relevant_was_retrieved",
+      "hand": "the ranker returned none of the 2 relevant documents. P=0/3, R=0/2, RR=0 (a real zero: the ranker missed, and something WAS judged relevant). F1 takes the 0/0 branch and is 0, not NaN.",
+      "relevant": { "z1": 1, "z2": 1 },
+      "ranked": ["a", "b", "c"],
+      "k": 3,
+      "expected": {
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "f1_at_k": 0.0,
+        "reciprocal_rank": 0.0
+      }
+    },
+    {
+      "name": "graded_gains_and_a_zero_gain_judgment",
+      "hand": "gains a=3, b=2, c=1, d=0. A judged gain of 0 is judged NOT relevant, so the relevant set is {a,b,c} (size 3) and d is a miss. Ranked (d,c,a,e): top-2 holds only c, so P@2=1/2 and R@2=1/3. First hit is c at rank 2, so RR=1/2. Document e was never judged, which also means not relevant.",
+      "relevant": { "a": 3, "b": 2, "c": 1, "d": 0 },
+      "ranked": ["d", "c", "a", "e"],
+      "k": 2,
+      "expected": {
+        "precision_at_k": 0.5,
+        "recall_at_k": 0.3333333333333333,
+        "f1_at_k": 0.4,
+        "reciprocal_rank": 0.5
+      }
+    },
+    {
+      "name": "document_id_named_proto",
+      "hand": "A document literally called '__proto__'. Relevant set is {__proto__, d2}, size 2. Top-2 of (__proto__, zz, d2) holds only __proto__, so P@2=1/2 and R@2=1/2, F1=2*(1/2)*(1/2)/1. First hit is at rank 1, so RR=1/1. This case exists because it once diverged: JavaScript's `plain['__proto__'] = 1` invokes Object.prototype's setter instead of creating a key, so the document vanished from the judgments and precision@1 was 1.0 in Python and 0 in the browser. Python has no such rule, and no refusal fired in either language -- both just answered, differently.",
+      "relevant": { "__proto__": 1, "d2": 1 },
+      "ranked": ["__proto__", "zz", "d2"],
+      "k": 2,
+      "expected": {
+        "precision_at_k": 0.5,
+        "recall_at_k": 0.5,
+        "f1_at_k": 0.5,
+        "reciprocal_rank": 1.0
+      }
+    },
+    {
+      "name": "recall_denominator_is_the_relevant_set",
+      "hand": "10 relevant documents, the ranker returned 2 and both are relevant. P@2=2/2=1.0 (perfect) while R@2=2/10=0.2. The two must not collapse into one number: dividing recall by k would report 1.0 here and hide 8 misses.",
+      "relevant": {
+        "r0": 1, "r1": 1, "r2": 1, "r3": 1, "r4": 1,
+        "r5": 1, "r6": 1, "r7": 1, "r8": 1, "r9": 1
+      },
+      "ranked": ["r0", "r1"],
+      "k": 2,
+      "expected": {
+        "precision_at_k": 1.0,
+        "recall_at_k": 0.2,
+        "f1_at_k": 0.33333333333333337,
+        "reciprocal_rank": 1.0
+      }
+    }
+  ],
+  "ranking_refusals": [
+    {
+      "name": "k_is_zero",
+      "why": "precision@0 divides by zero; the answer is undefined, not small",
+      "relevant": { "d1": 1 },
+      "ranked": ["d1", "d2"],
+      "k": 0,
+      "code": "assay.invalid_ranking_request"
+    },
+    {
+      "name": "k_is_negative",
+      "why": "a negative cut-off names no positions at all",
+      "relevant": { "d1": 1 },
+      "ranked": ["d1", "d2"],
+      "k": -1,
+      "code": "assay.invalid_ranking_request"
+    },
+    {
+      "name": "ranked_list_is_empty",
+      "why": "nothing was returned to score",
+      "relevant": { "d1": 1 },
+      "ranked": [],
+      "k": 3,
+      "code": "assay.invalid_ranking_request"
+    },
+    {
+      "name": "ranked_list_repeats_a_document",
+      "why": "refused, never de-duplicated: silently dropping the repeat changes both the positions and the count",
+      "relevant": { "d1": 1 },
+      "ranked": ["d1", "d1"],
+      "k": 2,
+      "code": "assay.invalid_ranking_request"
+    },
+    {
+      "name": "relevance_gain_is_fractional",
+      "why": "rounding 2.5 would move a document across the relevant boundary and no reference semantics says which way",
+      "relevant": { "d1": 2.5 },
+      "ranked": ["d1"],
+      "k": 1,
+      "code": "assay.invalid_ranking_request"
+    },
+    {
+      "name": "relevance_gain_is_negative",
+      "why": "a relevance grade is a level; there is no level below not-relevant",
+      "relevant": { "d1": -1 },
+      "ranked": ["d1"],
+      "k": 1,
+      "code": "assay.invalid_ranking_request"
+    },
+    {
+      "name": "no_document_is_judged_relevant",
+      "why": "recall has no denominator. Returning 0.0 would blame the ranker for missing JUDGMENTS -- a different failure with a different fix.",
+      "relevant": { "d1": 0, "d2": 0 },
+      "ranked": ["d1", "d2"],
+      "k": 2,
+      "code": "assay.empty_relevant_set"
+    }
+  ],
+  "classification": [
+    {
+      "name": "perfect_separation",
+      "hand": "threshold 0.5 splits (0.1,0.2) from (0.8,0.9) exactly along the labels. tp=2, fp=0, tn=2, fn=0. accuracy=(2+2)/4, precision=2/2, recall=2/2, f1=1, fpr=0/(0+2), fnr=0/(0+2).",
+      "y_true": [0, 0, 1, 1],
+      "y_score": [0.1, 0.2, 0.8, 0.9],
+      "threshold": 0.5,
+      "expected": {
+        "true_positives": 2,
+        "false_positives": 0,
+        "true_negatives": 2,
+        "false_negatives": 0,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 0.0
+      }
+    },
+    {
+      "name": "one_error_of_each_kind",
+      "hand": "predictions at 0.5 are (0,1,0,1) against labels (0,0,1,1). tn=idx0, fp=idx1, fn=idx2, tp=idx3 -- one of every cell. accuracy=2/4, precision=1/2, recall=1/2, f1=2*(1/2)*(1/2)/1=1/2, fpr=1/(1+1), fnr=1/(1+1). This case is the one that catches a tp/fp transposition: every total still adds up under the swap, but fpr and fnr do not.",
+      "y_true": [0, 0, 1, 1],
+      "y_score": [0.1, 0.9, 0.2, 0.8],
+      "threshold": 0.5,
+      "expected": {
+        "true_positives": 1,
+        "false_positives": 1,
+        "true_negatives": 1,
+        "false_negatives": 1,
+        "accuracy": 0.5,
+        "precision": 0.5,
+        "recall": 0.5,
+        "f1": 0.5,
+        "false_positive_rate": 0.5,
+        "false_negative_rate": 0.5
+      }
+    },
+    {
+      "name": "threshold_moves_the_cells",
+      "hand": "same scores as above, threshold raised to 0.85: only 0.9 clears it, so predictions are (0,1,0,0). tp=0, fp=1, tn=1, fn=2. accuracy=1/4. precision takes the 0/0 branch -- nothing true was predicted positive out of 1 positive prediction, so 0/1=0. recall=0/2=0. f1 then takes the 0/0 branch and is 0, NOT NaN (scikit-learn's zero_division=0.0). fpr=1/(1+1), fnr=2/(2+0)=1.0 -- every positive was missed.",
+      "y_true": [0, 0, 1, 1],
+      "y_score": [0.1, 0.9, 0.2, 0.8],
+      "threshold": 0.85,
+      "expected": {
+        "true_positives": 0,
+        "false_positives": 1,
+        "true_negatives": 1,
+        "false_negatives": 2,
+        "accuracy": 0.25,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "false_positive_rate": 0.5,
+        "false_negative_rate": 1.0
+      }
+    },
+    {
+      "name": "score_equal_to_threshold_is_positive",
+      "hand": "both scores are exactly 0.5 at threshold 0.5. The comparison is >=, so BOTH are predicted positive: tp=1, fp=1, tn=0, fn=0. accuracy=1/2, precision=1/2, recall=1/1=1, f1=2*(1/2)*1/(3/2)=2/3, fpr=1/(1+0)=1.0, fnr=0/(0+1)=0. Flipping >= to > would make both predictions negative and every one of these six numbers change.",
+      "y_true": [0, 1],
+      "y_score": [0.5, 0.5],
+      "threshold": 0.5,
+      "expected": {
+        "true_positives": 1,
+        "false_positives": 1,
+        "true_negatives": 0,
+        "false_negatives": 0,
+        "accuracy": 0.5,
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6666666666666666,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      }
+    },
+    {
+      "name": "imbalanced_screen_at_the_default_threshold",
+      "hand": "no threshold given, so the documented default 0.5 applies. 8 negatives, 2 positives. Scores over 0.5 are idx4 (0.55), idx5 (0.6) and idx9 (0.95). idx9 is the only true positive; idx4 and idx5 are false alarms; idx8 (0.45, label 1) is the miss. tp=1, fp=2, tn=6, fn=1. accuracy=(1+6)/10=0.7, precision=1/3, recall=1/2, f1=2*(1/3)*(1/2)/((1/3)+(1/2))=(1/3)/(5/6)=0.4, fpr=2/(2+6)=0.25, fnr=1/(1+1)=0.5. Accuracy 0.7 alongside recall 0.5 is why the cells are reported and not just the headline.",
+      "y_true": [0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
+      "y_score": [0.1, 0.2, 0.3, 0.4, 0.55, 0.6, 0.05, 0.15, 0.45, 0.95],
+      "threshold": null,
+      "expected": {
+        "true_positives": 1,
+        "false_positives": 2,
+        "true_negatives": 6,
+        "false_negatives": 1,
+        "accuracy": 0.7,
+        "precision": 0.3333333333333333,
+        "recall": 0.5,
+        "f1": 0.4,
+        "false_positive_rate": 0.25,
+        "false_negative_rate": 0.5
+      }
+    }
+  ],
+  "classification_refusals": [
+    {
+      "name": "length_mismatch",
+      "why": "there is no pairing of labels to scores to score",
+      "y_true": [0, 1],
+      "y_score": [0.5],
+      "code": "assay.invalid_request"
+    },
+    {
+      "name": "empty_inputs",
+      "why": "every rate divides by zero",
+      "y_true": [],
+      "y_score": [],
+      "code": "assay.invalid_request"
+    },
+    {
+      "name": "only_one_class_present",
+      "why": "Python's floor, kept here: an input that scores in the browser and refuses on the server is the divergence this contract exists to prevent. It also guarantees both denominators of recall and FPR are non-zero.",
+      "y_true": [1, 1, 1],
+      "y_score": [0.2, 0.8, 0.5],
+      "code": "assay.invalid_request"
+    },
+    {
+      "name": "label_is_not_zero_or_one",
+      "why": "REFUSED IN BOTH LANGUAGES with the same coded InvalidScoreRequest. Python validates binary labels before scikit-learn so neither runtime silently changes the contract.",
+      "y_true": [0, 1, 2],
+      "y_score": [0.1, 0.6, 0.9],
+      "code": "assay.invalid_request"
+    }
+  ]
+}

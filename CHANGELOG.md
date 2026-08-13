@@ -65,6 +65,48 @@
   correction, both new refusals, the undefined-not-perfect rule, the confusion-cell read
   order, and the FNR's denominator.
 - **A new coded error, `InvalidAgreementRequest` (`assay.invalid_agreement_request`).**
+- **`@edgeproc/avow` 0.4.0 grows a metrics face: recall@k, precision@k, F1@k, MRR, and
+  the binary confusion set.** Until now the TypeScript package exported zero metric
+  functions, which meant every TypeScript metric in the portfolio was hand-rolled *by
+  construction* — there was nothing to adopt. aml-filter's release gate reads a recall
+  number computed by 29 lines of bespoke arithmetic in its own repo; that is the only
+  shipped recall figure anywhere in the portfolio, and nothing checked it against a
+  reference. `ts/src/ranking.ts` and `ts/src/metrics.ts` are now that reference, and
+  they refuse everything Python refuses, with the same `assay.*` codes: an empty ranked
+  list, a duplicate document, a fractional relevance grade, a non-positive `k`, a set
+  with nothing judged relevant, a single-class label set.
+- **`testdata/vectors/metrics.json` — 22 hand-computed cases that BOTH suites replay.**
+  This is the part that makes the deliverable real. A TypeScript metrics module without
+  cross-language vectors just adds a second place for the number to be wrong: Python
+  reaches its answers through `trec_eval` and scikit-learn, TypeScript counts them out
+  against the definitions, and two implementations of one rule is exactly the
+  arrangement that drifts. `tests/test_metric_vectors.py` and
+  `ts/src/metricVectors.test.ts` read the same file, so a divergence fails CI in both
+  languages rather than being found later by a human.
+  Unlike `canonical.json`, it is **not generated** — those hold bytes nobody could
+  author by hand, whereas a generated metric vector would be a transcript of whatever
+  the code currently returns, green through the exact bug it exists to catch. Every
+  number was computed from the definition (each case carries its arithmetic in a `hand`
+  field) and then checked against Python. The confusion cells are pinned without a
+  Python confusion-count function existing: the actual-positive count is countable
+  straight off `y_true`, and scikit-learn's recall and accuracy then determine all four
+  cells uniquely, so the Python replay re-derives them and requires the result to equal
+  the cells TypeScript asserts.
+- **17 more mutations, 16 of which break TypeScript and run under vitest.** The
+  harness previously spoke only pytest. A claim only Python can break is a claim only
+  Python defends, and half of the metrics claims now ship in a browser. Two of the new
+  mutations are guarded *only* by the shared-vector suite, so they answer the question
+  that makes the vectors worth having: when the TypeScript answer is pushed away from
+  Python's, does the shared file actually notice.
+  **Vitest's verdict is read from its JSON reporter's pass/fail counts, never its exit
+  code.** `vitest run -t 'no-such-test'` exits **0**, reporting every test in the file
+  as "total" while running none of them — read by exit code, a guard that no longer
+  exists reports a green baseline. `numPassedTests` is the only field that says
+  something ran, and a reporter that writes no file at all (what a misspelled reporter
+  name does, and what once let a sibling harness score twelve crashed runs as green) is
+  a harness error rather than a verdict.
+- **`test_the_metric_vector_counts_the_readme_promises`**, pinning 6 / 7 / 5 / 4 metric
+  cases to the literals the README states, with its own mutation that drops one.
 - **A mutation harness, `scripts/mutation_harness.py`, run with `uv run poe mutants`.**
   The ranking face's red runs existed only as prose in a commit message, so no reader
   could re-run them — and a guard nobody can watch fail is not evidence. The harness
@@ -102,11 +144,42 @@
   rather than captured once. It is deliberately not a step inside `gate`: `gate` asks
   whether the tests pass, `mutants` asks whether they can fail.
 
+### Fixed
+- **A document id of `__proto__` scored 1.0 in Python and 0 in the browser.** Found by
+  probing the new face rather than by a test, which is the honest way to say it.
+  `binaryJudgments` accumulated into a plain object, and `plain["__proto__"] = 1` does
+  not create a property — it invokes `Object.prototype`'s `__proto__` setter, which
+  ignores a non-object value. The document silently vanished from the judgments. Python
+  has no such rule and keeps the key, so the same input produced precision@1 of **1.0
+  server-side and 0.0 browser-side**: no refusal in either language, no rounding
+  difference, just two confident and different answers — exactly the defect the shared
+  vectors exist to prevent, in the very PR that introduced them. The accumulator now has
+  a null prototype, and the `document_id_named_proto` shared vector pins it in both
+  languages, with a mutation (`ts-ranking-keeps-a-document-called-proto`) that puts the
+  plain object back and watches the guard go red.
+- **The mutation harness was scoring a guard `SURVIVED` on stale bytecode.** Found while
+  adding the TypeScript guards, by running `poe mutants` repeatedly at an unchanged
+  commit: `ranking-k-reaches-trec-eval` failed on two of three runs. CPython decides a
+  `.pyc` is current from the source's mtime **and size**, and three of the existing
+  mutations are one character for one character — `P @ k` -> `P @ 1`, `R @ k` -> `P @ k`,
+  `AP)` -> `RR)`. The size never changes, so a write landing inside the same mtime tick
+  as the cached `.pyc` left the next interpreter loading unmutated bytecode: the guard
+  ran against code that was never broken, passed, and was reported as blind. The restore
+  path had the nastier version of the same bug — the `.pyc` written during a mutated run
+  could shadow the restored source, so the *next* mutation's baseline ran mutated code.
+  Both writes now drop the cached `.pyc`. 36/36 across four consecutive runs after the
+  fix, against 1/3 clean before it.
+  This is the harness's own instance of the defect it exists to catch: it reported a
+  verdict it had not actually measured.
+
 ### Changed
 - `ClassificationDetail` in a receipt gains `false_negative_rate` and `confusion`.
   `ReceiptPayload` gains an optional `agreement` detail. The golden cross-language vectors
   are unaffected: they carry their own subject model, not `assay.ReceiptPayload`.
 
+- The `mutation-gate` CI job now installs pnpm and Node 22 alongside uv, because the
+  harness it runs breaks guards in both languages. Nothing was weakened: the job gained
+  a toolchain, not an exemption.
 - `astral-sh/setup-uv` bumped to **v9.0.0** in `ci.yml` and `security-audit.yml`. The
   comment beside each pin names the exact version (`# v9.0.0`), never a floating `# v9` —
   a floating-major comment turned another repo's `main` red the day upstream re-pointed
