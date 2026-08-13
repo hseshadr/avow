@@ -111,6 +111,12 @@ class LedgerConfigurationInvalid(AvowError):
     code: ClassVar[str] = "avow.ledger_configuration_invalid"
 
 
+class LedgerLimitExceeded(AvowError):
+    """A ledger exceeded its supported byte, entry, or line-size boundary."""
+
+    code: ClassVar[str] = "avow.ledger_limit_exceeded"
+
+
 class LedgerHeadWriteFailed(AvowError):
     """A complete pinned head could not be durably installed."""
 

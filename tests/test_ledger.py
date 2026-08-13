@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
+import avow.ledger as ledger_module
 from assay.receipt import ReceiptPayload, ScoreReceipt, payload_digest, sign_payload
 from avow.errors import (
     AvowError,
@@ -16,6 +17,7 @@ from avow.errors import (
     LedgerHeadUnreadable,
     LedgerHeadWriteFailed,
     LedgerIntegrityError,
+    LedgerLimitExceeded,
     LedgerLockTimeout,
     LedgerUnreadable,
 )
@@ -23,6 +25,9 @@ from avow.ledger import (
     EMPTY_HEAD,
     GENESIS_HASH,
     LedgerHead,
+    _decode_entry_line,
+    _decode_last_line,
+    _same_parent,
     append,
     append_and_save_head,
     current_head,
@@ -172,6 +177,103 @@ def test_should_reject_an_unbounded_lock_timeout_before_writing(
     assert not ledger.exists()
 
 
+def test_should_bound_ledger_entry_count_without_changing_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given a ledger has reached its explicit supported entry ceiling
+    ledger = tmp_path / "ledger.jsonl"
+    first = append(_receipt(0.1), path=ledger)
+    before = ledger.read_bytes()
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_ENTRIES", 1)
+    # When one more append is attempted, it fails before changing the file
+    with pytest.raises(LedgerLimitExceeded):
+        append(_receipt(0.2), path=ledger)
+    assert ledger.read_bytes() == before
+    assert current_head(ledger) == first
+
+
+def test_should_bound_total_ledger_bytes_before_reading_or_appending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given an existing ledger exceeds the configured byte ceiling
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_BYTES", 2)
+    # Then both read and append fail closed without changing its bytes
+    before = ledger.read_bytes()
+    with pytest.raises(LedgerLimitExceeded):
+        read_entries(ledger)
+    with pytest.raises(LedgerLimitExceeded):
+        append(_receipt(0.1), path=ledger)
+    assert ledger.read_bytes() == before
+
+
+def test_should_bound_one_ledger_line_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given even one encoded receipt would exceed the supported line ceiling
+    ledger = tmp_path / "ledger.jsonl"
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_LINE_BYTES", 32)
+    # When append serialises it, no partial line is written
+    with pytest.raises(LedgerLimitExceeded):
+        append(_receipt(0.1), path=ledger)
+    assert ledger.read_bytes() == b""
+
+
+def test_should_bound_the_appended_total_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given the existing ledger fits but the next complete line would cross its byte cap
+    ledger = tmp_path / "ledger.jsonl"
+    first = append(_receipt(0.1), path=ledger)
+    before = ledger.read_bytes()
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_BYTES", len(before) + 1)
+    # When another valid receipt is appended, history remains byte-identical
+    with pytest.raises(LedgerLimitExceeded):
+        append(_receipt(0.2), path=ledger)
+    assert ledger.read_bytes() == before
+    assert current_head(ledger) == first
+
+
+def test_should_reject_an_oversized_or_non_utf8_final_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given malformed ledgers end in either a line outside the cap or invalid UTF-8
+    oversized, binary = tmp_path / "oversized.jsonl", tmp_path / "binary.jsonl"
+    oversized.write_bytes(b"x" * 40)
+    binary.write_bytes(b"\xff\n")
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_LINE_BYTES", 32)
+    # Then tail recovery rejects both with their typed, fail-closed causes
+    with pytest.raises(LedgerLimitExceeded):
+        append(_receipt(0.1), path=oversized)
+    with pytest.raises(LedgerEntryMalformed, match="UTF-8"):
+        append(_receipt(0.1), path=binary)
+
+
+def test_should_bound_direct_tail_decoding_and_treat_blank_as_empty() -> None:
+    # The bounded decoder itself refuses one over-cap line and accepts an empty tail
+    with pytest.raises(LedgerLimitExceeded):
+        _decode_entry_line(b"x" * (ledger_module.MAX_LEDGER_LINE_BYTES + 1))
+    assert _decode_last_line(b"\n", truncated=False) is None
+
+
+def test_should_bound_streamed_lines_and_entry_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given blank lines plus either an oversized line or too many bounded entries
+    oversized, crowded = tmp_path / "oversized.jsonl", tmp_path / "crowded.jsonl"
+    oversized.write_text("\n" + "x" * 40 + "\n", encoding="utf-8")
+    _ledger_of(crowded, 0.1, 0.2)
+    crowded.write_text("\n" + crowded.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_LINE_BYTES", 32)
+    with pytest.raises(LedgerLimitExceeded):
+        read_entries(oversized)
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_LINE_BYTES", 64 * 1024)
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_ENTRIES", 1)
+    with pytest.raises(LedgerLimitExceeded):
+        read_entries(crowded)
+
+
 def test_should_refuse_to_replace_the_ledger_with_its_own_head(tmp_path: Path) -> None:
     # Given one path is mistakenly supplied as both append log and convenience pin
     ledger = tmp_path / "ledger.jsonl"
@@ -197,6 +299,35 @@ def test_should_refuse_a_head_hard_linked_to_the_existing_ledger(tmp_path: Path)
     assert current_head(alias) == first
 
 
+def _filesystem_aliases(tmp_path: Path, first_name: str, second_name: str) -> bool:
+    """Ask this test volume whether its directory rules collapse two absent names."""
+    probe = tmp_path / first_name
+    probe.touch()
+    aliases = (tmp_path / second_name).exists()
+    probe.unlink()
+    return aliases
+
+
+@pytest.mark.parametrize(
+    ("ledger_name", "head_name"),
+    [("ledger.jsonl", "LEDGER.JSONL"), ("café.jsonl", "cafe\u0301.jsonl")],
+)
+def test_should_refuse_absent_names_that_this_filesystem_aliases(
+    tmp_path: Path, ledger_name: str, head_name: str
+) -> None:
+    # Given this volume treats two initially absent spellings as one directory entry
+    if not _filesystem_aliases(tmp_path, ledger_name, head_name):
+        pytest.skip("test volume keeps these names distinct")
+    ledger, head = tmp_path / ledger_name, tmp_path / head_name
+    # When combined persistence validates the two requested destinations
+    with pytest.raises(AvowError) as caught:
+        append_and_save_head(_receipt(0.1), path=ledger, head_path=head)
+    # Then it refuses before creating either spelling, so no success can hide data loss
+    assert caught.value.code == "avow.ledger_configuration_invalid"
+    assert not ledger.exists()
+    assert not head.exists()
+
+
 def test_should_code_a_persistence_path_resolution_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -211,6 +342,30 @@ def test_should_code_a_persistence_path_resolution_failure(
             _receipt(0.1), path=tmp_path / "ledger.jsonl", head_path=tmp_path / "ledger.head"
         )
     assert caught.value.code == "avow.ledger_configuration_invalid"
+
+
+def test_should_code_an_absent_parent_identity_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given destination identity lookup reports absence, then its fallback cannot resolve
+    def report_absent(left: Path, right: Path) -> bool:
+        raise FileNotFoundError
+
+    def refuse_exists(path: Path) -> bool:
+        raise OSError("identity unavailable")
+
+    monkeypatch.setattr(Path, "samefile", report_absent)
+    monkeypatch.setattr(Path, "exists", refuse_exists)
+    with pytest.raises(AvowError) as caught:
+        append_and_save_head(
+            _receipt(0.1), path=tmp_path / "ledger.jsonl", head_path=tmp_path / "ledger.head"
+        )
+    assert caught.value.code == "avow.ledger_configuration_invalid"
+
+
+def test_should_resolve_two_absent_spellings_of_one_parent(tmp_path: Path) -> None:
+    # Parent identity fallback is deterministic even before that directory exists
+    assert _same_parent(tmp_path / "absent" / "a", tmp_path / "absent" / "b")
 
 
 def test_should_survive_immediate_process_exit_after_append_returns(tmp_path: Path) -> None:

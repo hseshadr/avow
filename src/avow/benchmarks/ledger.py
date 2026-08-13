@@ -14,10 +14,20 @@ from nacl.signing import SigningKey
 from avow.benchmarks._contracts import SampleBatch, Stats, peak_rss_mib, require, sample, stats
 from avow.benchmarks.envelope import BenchmarkSubject
 from avow.envelope import SignedReceipt, sign_payload
-from avow.ledger import append_and_save_head, read_head, verify_integrity
+from avow.ledger import (
+    GENESIS_HASH,
+    LedgerEntry,
+    LedgerHead,
+    append_and_save_head,
+    entry_hash,
+    read_head,
+    save_head,
+    verify_integrity,
+)
 
 _SEED = bytes(range(32))
-_ENTRY_COUNT = 200
+_APPEND_COUNT = 200
+_HISTORY_COUNT = 5_000
 _COMPLETION_LIMIT_SECONDS = 15
 
 
@@ -26,6 +36,26 @@ def _worker(ledger: Path, head: Path, result: Path) -> None:
     operation = partial(append_and_save_head, receipt, path=ledger, head_path=head)
     batch = SampleBatch(samples_ms=tuple(sample(operation, 0, 50)), peak_rss_mib=peak_rss_mib())
     result.write_text(batch.model_dump_json(), encoding="utf-8")
+
+
+def _entry(index: int, previous: str, receipt: SignedReceipt[BenchmarkSubject]) -> LedgerEntry:
+    return LedgerEntry(
+        seq=index,
+        prev_hash=previous,
+        receipt=receipt.model_dump(mode="json"),
+    )
+
+
+def _seed(ledger: Path, head: Path) -> None:
+    """Build one realistic history once; timed appends must read only its bounded tail."""
+    receipt = sign_payload(BenchmarkSubject(evidence="ledger"), SigningKey(_SEED))
+    previous = GENESIS_HASH
+    with ledger.open("w", encoding="utf-8") as handle:
+        for index in range(_HISTORY_COUNT):
+            entry = _entry(index, previous, receipt)
+            handle.write(entry.model_dump_json() + "\n")
+            previous = entry_hash(entry)
+    save_head(LedgerHead(count=_HISTORY_COUNT, head_hash=previous), path=head)
 
 
 def _start(ledger: Path, head: Path, results: list[Path]) -> list[BaseProcess]:
@@ -60,13 +90,15 @@ def _verify(ledger: Path, head: Path) -> None:
         expected_public_key=bytes(SigningKey(_SEED).verify_key).hex(),
         expected_head=read_head(head),
     )
-    if len(receipts) != _ENTRY_COUNT:
-        raise RuntimeError(f"ledger lost entries: expected {_ENTRY_COUNT}, found {len(receipts)}")
+    expected = _HISTORY_COUNT + _APPEND_COUNT
+    if len(receipts) != expected:
+        raise RuntimeError(f"ledger lost entries: expected {expected}, found {len(receipts)}")
 
 
 def _run(root: Path) -> Stats:
     ledger, head = root / "ledger.jsonl", root / "ledger.head"
     results = [root / f"worker-{index}.json" for index in range(4)]
+    _seed(ledger, head)
     started = time.perf_counter()
     _join(_start(ledger, head, results))
     _verify(ledger, head)

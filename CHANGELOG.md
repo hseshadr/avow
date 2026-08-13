@@ -21,6 +21,11 @@
   durably installed raises `avow.ledger_head_write_failed`; it never reports success.
 - Invalid persistence configurations fail before writing: lock timeouts must be finite
   and non-negative, and the ledger and convenience head must use distinct paths.
+- CLI validation and domain failures now emit only a stable code and safe schema field
+  path; raw exception messages and caller-controlled values never enter CLI output.
+- Append now reads only one bounded tail entry rather than the whole ledger. Read,
+  append, and verification enforce 64 MiB, 100,000-entry, and 64 KiB-line limits with
+  `avow.ledger_limit_exceeded`; the concurrency benchmark starts from 5,000 entries.
 - A successful append flushes and `fsync`s the complete JSONL line before returning.
   Head saves use a same-directory temporary file, file `fsync`, atomic replacement,
   directory `fsync`, and failure cleanup. The documented RPO is zero relative to a

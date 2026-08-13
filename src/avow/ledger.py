@@ -62,6 +62,7 @@ from avow.errors import (
     LedgerHeadUnreadable,
     LedgerHeadWriteFailed,
     LedgerIntegrityError,
+    LedgerLimitExceeded,
     LedgerLockTimeout,
     LedgerUnreadable,
     SignatureInvalid,
@@ -72,6 +73,9 @@ from avow.verify import verify_receipt
 # claiming genesis provenance can only ever be at position 0.
 GENESIS_HASH = "sha256:" + "0" * 64
 DEFAULT_LOCK_TIMEOUT_SECONDS = 5.0
+MAX_LEDGER_BYTES = 64 * 1024 * 1024
+MAX_LEDGER_ENTRIES = 100_000
+MAX_LEDGER_LINE_BYTES = 64 * 1024
 _LOCK_POLL_SECONDS = 0.01
 
 
@@ -134,18 +138,58 @@ def _parse_entry(line: str) -> LedgerEntry:
         raise LedgerEntryMalformed(f"ledger entry is not a valid chained entry: {exc}") from exc
 
 
-def _open_lines(handle: TextIO) -> list[str]:
-    """Every non-blank line currently in an open ledger, read from the top."""
-    handle.seek(0)
-    return [line for line in handle.read().splitlines() if line.strip()]
+def _require_ledger_size(size: int) -> None:
+    """Fail before reading or appending beyond the supported memory boundary."""
+    if size > MAX_LEDGER_BYTES:
+        raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_BYTES} bytes")
 
 
-def _head_of_lines(lines: list[str]) -> LedgerHead:
-    """The head these lines claim. Untrusted by construction — an appender chains onto
-    whatever it finds; only the pinned head decides whether that was the real history."""
-    if not lines:
-        return EMPTY_HEAD
-    return _head_after(_parse_entry(lines[-1]))
+def _last_content(tail: bytes) -> bytes | None:
+    """Remove final newlines; an all-blank tail represents an empty ledger."""
+    content = tail.rstrip(b"\r\n")
+    return content or None
+
+
+def _require_complete_tail(content: bytes, *, truncated: bool) -> None:
+    """Reject a tail whose final line began before the bounded read."""
+    if truncated and b"\n" not in content:
+        raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
+
+
+def _decode_entry_line(line: bytes) -> str:
+    """Decode one size-bounded UTF-8 ledger line with a stable malformed error."""
+    if len(line) + 1 > MAX_LEDGER_LINE_BYTES:
+        raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
+    try:
+        return line.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LedgerEntryMalformed("ledger entry is not valid UTF-8") from exc
+
+
+def _decode_last_line(tail: bytes, *, truncated: bool) -> str | None:
+    """Decode one bounded tail, refusing an incomplete oversized final line."""
+    content = _last_content(tail)
+    if content is None:
+        return None
+    _require_complete_tail(content, truncated=truncated)
+    return _decode_entry_line(content.rsplit(b"\n", maxsplit=1)[-1])
+
+
+def _last_line(handle: TextIO) -> str | None:
+    """Read only the bounded tail needed to recover the current entry."""
+    size = os.fstat(handle.fileno()).st_size
+    _require_ledger_size(size)
+    if size == 0:
+        return None
+    length = min(size, MAX_LEDGER_LINE_BYTES + 2)
+    tail = os.pread(handle.fileno(), length, size - length)
+    return _decode_last_line(tail, truncated=size > length)
+
+
+def _current_locked_head(handle: TextIO) -> LedgerHead:
+    """Recover the untrusted current head in O(one bounded line)."""
+    line = _last_line(handle)
+    return EMPTY_HEAD if line is None else _head_after(_parse_entry(line))
 
 
 def _acquire_lock(handle: TextIO, timeout_seconds: float) -> None:
@@ -195,12 +239,25 @@ def _append_locked[S: BaseModel](
     receipt: SignedReceipt[S], *, handle: TextIO, path: Path
 ) -> LedgerHead:
     """Append and durably flush while the caller holds the ledger lock."""
-    entry = _link_onto(_head_of_lines(_open_lines(handle)), receipt)
-    handle.write(entry.model_dump_json() + "\n")
+    current = _current_locked_head(handle)
+    entry = _link_onto(current, receipt)
+    encoded = (entry.model_dump_json() + "\n").encode()
+    _require_append_limits(handle, current, encoded)
+    handle.buffer.write(encoded)
     handle.flush()
     os.fsync(handle.fileno())
     _sync_directory(path.parent)
     return _head_after(entry)
+
+
+def _require_append_limits(handle: TextIO, head: LedgerHead, encoded: bytes) -> None:
+    """Reject any append that would cross a declared support ceiling."""
+    if head.count >= MAX_LEDGER_ENTRIES:
+        raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_ENTRIES} entries")
+    if len(encoded) > MAX_LEDGER_LINE_BYTES:
+        raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
+    if os.fstat(handle.fileno()).st_size + len(encoded) > MAX_LEDGER_BYTES:
+        raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_BYTES} bytes")
 
 
 def append[S: BaseModel](
@@ -228,14 +285,27 @@ def _require_readable_file(path: Path) -> None:
         raise LedgerUnreadable(f"ledger cannot be read (permission denied): {path}")
 
 
-def read_entries(path: Path) -> tuple[LedgerEntry, ...]:
-    """Read every chained entry, failing closed if the ledger cannot be read.
+def _read_bounded_entries(handle: TextIO) -> list[LedgerEntry]:
+    """Stream a ledger into its explicitly bounded public tuple."""
+    entries: list[LedgerEntry] = []
+    while line := handle.readline(MAX_LEDGER_LINE_BYTES + 1):
+        if not line.strip():
+            continue
+        if len(line.encode()) > MAX_LEDGER_LINE_BYTES:
+            raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
+        entries.append(_parse_entry(line))
+        if len(entries) > MAX_LEDGER_ENTRIES:
+            raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_ENTRIES} entries")
+    return entries
 
-    Subject-agnostic: this is enough to walk the chain, never enough to check a
-    signature."""
+
+def read_entries(path: Path) -> tuple[LedgerEntry, ...]:
+    """Read every entry within the documented byte, line, and count ceilings."""
     _require_readable_file(path)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return tuple(_parse_entry(line) for line in lines if line.strip())
+    _require_ledger_size(path.stat().st_size)
+    with path.open("r", encoding="utf-8") as handle:
+        entries = _read_bounded_entries(handle)
+    return tuple(entries)
 
 
 def _entry_receipt[S: BaseModel](
@@ -357,12 +427,49 @@ def save_head(head: LedgerHead, *, path: Path) -> None:
         raise LedgerHeadWriteFailed(f"could not durably write ledger head: {path}") from exc
 
 
+def _same_parent(left: Path, right: Path) -> bool:
+    """Ask the filesystem whether two destination directories are one directory."""
+    try:
+        return left.parent.samefile(right.parent)
+    except FileNotFoundError:
+        return left.parent.resolve() == right.parent.resolve()
+
+
+def _probe_absent_names(left: Path, right: Path) -> bool:
+    """Ask the destination volume whether its directory rules collapse two names."""
+    with tempfile.TemporaryDirectory(prefix=".avow-path-probe-", dir=left.parent) as directory:
+        first, second = Path(directory) / left.name, Path(directory) / right.name
+        first.touch(exist_ok=False)
+        try:
+            second.touch(exist_ok=False)
+        except FileExistsError:
+            return True
+    return False
+
+
+def _unchecked_absent_alias(left: Path, right: Path) -> bool:
+    """Resolve absent destinations and ask their actual volume about name equality."""
+    if left.exists() or right.exists():
+        return False
+    if left.resolve() == right.resolve():
+        return True
+    return _same_parent(left, right) and _probe_absent_names(left, right)
+
+
+def _absent_paths_alias(left: Path, right: Path) -> bool:
+    """Translate an unknowable filesystem identity into one coded failure."""
+    try:
+        return _unchecked_absent_alias(left, right)
+    except OSError as exc:
+        raise LedgerConfigurationInvalid("ledger persistence paths could not be resolved") from exc
+
+
 def _paths_alias(left: Path, right: Path) -> bool:
     """Whether two path spellings name, or would name, the same filesystem entry."""
     try:
         return left.samefile(right)
     except FileNotFoundError:
-        return left.resolve() == right.resolve()
+        return _absent_paths_alias(left, right)
     except OSError as exc:
         raise LedgerConfigurationInvalid("ledger persistence paths could not be resolved") from exc
 
@@ -380,11 +487,10 @@ def append_and_save_head[S: BaseModel](
     head_path: Path,
     lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> LedgerHead:
-    """Append and atomically save its convenience pin under one process lock.
-
-    Export the head beyond the ledger writer for an actual truncation boundary."""
+    """Append and save its convenience pin under one bounded process lock."""
     _require_distinct_paths(path, head_path)
     with _locked_ledger(path, lock_timeout_seconds) as handle:
+        _require_distinct_paths(path, head_path)
         head = _append_locked(receipt, handle=handle, path=path)
         save_head(head, path=head_path)
         return head
