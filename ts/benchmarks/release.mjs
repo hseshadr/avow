@@ -44,7 +44,7 @@ const stats = {
   p50_ms: percentile(samples, 0.5),
   p95_ms: percentile(samples, 0.95),
   p99_ms: percentile(samples, 0.99),
-  peak_rss_mib: process.memoryUsage().rss / (1024 * 1024),
+  peak_rss_mib: process.resourceUsage().maxRSS / 1024,
 };
 enforce(stats);
 console.log(JSON.stringify({ envelope: stats }));
