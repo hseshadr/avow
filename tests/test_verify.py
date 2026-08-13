@@ -153,8 +153,8 @@ def test_should_keep_both_causes_catchable_as_signature_invalid(
 # verifier holding only a receipt and a public key can tell a first presentation from
 # the thousandth. That is not a gap to be closed inside the envelope — it is what
 # "offline, years later, with no network and no state" means. The tests below pin BOTH
-# halves of the boundary so neither can drift: the envelope accepts a replay, and the
-# ledger chain is the thing that refuses one.
+# halves of the boundary so neither can drift: the envelope accepts a repeated
+# presentation, while the ledger catches encoded-line reinsertion only.
 # ---------------------------------------------------------------------------
 
 
@@ -166,22 +166,21 @@ def test_a_replayed_receipt_verifies_because_a_signature_carries_no_freshness() 
     # When it is presented again, unchanged, at any later time
     # Then it verifies — and it always will. The envelope holds no record of what it has
     # already seen, so "have I seen this before?" is a question it cannot be asked.
-    # Replay defence belongs to the ledger (below) or to a caller-held nonce, never here.
+    # Semantic replay defence belongs to caller-owned nonce/request-ID state, never here.
     for _ in range(100):
         assert verify_receipt(captured, expected_public_key=_EXPECTED) is None
 
 
-def test_the_ledger_chain_is_what_refuses_a_replayed_receipt(tmp_path: Path) -> None:
-    # Given the SAME receipt the envelope happily re-verifies above, recorded in a ledger
+def test_the_ledger_chain_refuses_reinserting_an_encoded_line(tmp_path: Path) -> None:
+    # Given a genuine receipt and its already positioned, encoded ledger line
     receipt = _receipt()
     path = tmp_path / "ledger.jsonl"
     append(receipt, path=path)
     head = append(_receipt_scoring(0.5), path=path)
-    # When an attacker replays the first entry by appending its line a second time
+    # When an attacker reinserts that encoded line at a different chain position
     lines = path.read_text(encoding="utf-8").splitlines()
     path.write_text("\n".join([*lines, lines[0]]) + "\n", encoding="utf-8")
-    # Then the ledger rejects it against the pinned head, even though every line is
-    # genuinely signed. THIS is where replay is caught — sequence, not signature.
+    # Then the ledger rejects the copied line, even though every receipt is signed.
     # Watched go red: only with BOTH the chain walk and the head comparison disabled.
     # Either one alone catches this, which is defence in depth, not a redundant check.
     with pytest.raises(LedgerIntegrityError):

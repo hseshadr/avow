@@ -65,40 +65,31 @@ def _check_hash[SubjectT: BaseModel](receipt: SignedReceipt[SubjectT]) -> None:
         raise PayloadHashMismatch("payload hash does not match payload content")
 
 
+def _require_signer[SubjectT: BaseModel](
+    receipt: SignedReceipt[SubjectT], expected_public_key: str
+) -> None:
+    """Require the caller-pinned signer, comparing hex by value."""
+    if receipt.public_key.lower() != expected_public_key.lower():
+        raise SignerMismatch("receipt public key is not the expected signer")
+
+
+def _check_signature_bytes(message: bytes, signature: str, public_key: str) -> None:
+    """Translate malformed or invalid signature bytes to one coded failure."""
+    try:
+        verifier = VerifyKey(bytes.fromhex(public_key))
+        verifier.verify(message, bytes.fromhex(signature))
+    except (ValueError, BadSignatureError) as exc:
+        raise SignatureBytesInvalid("signature does not match payload") from exc
+
+
 def verify_signature[SubjectT: BaseModel](
     receipt: SignedReceipt[SubjectT], *, expected_public_key: str
 ) -> None:
-    """Verify a receipt against a **pinned** signer key.
+    """Verify content and signer against a caller-pinned key, without freshness.
 
-    Authenticity requires knowing *whose* signature to trust. The receipt's own
-    ``public_key`` field lives outside the signed payload, so a re-signed forgery
-    can swap in the attacker's key and pass a bare signature check. We therefore
-    reject — independent of the signature — any receipt whose embedded key is not
-    the ``expected_public_key`` the caller pinned out-of-band, then recompute the
-    hash and verify the detached Ed25519 signature under that pinned key.
-
-    **What this proves, and what it does not.** It proves the receipt was signed by the
-    pinned key and has not been modified since. It does **not** prove *freshness* — that
-    this is the first time the receipt has been presented, or that it was made recently.
-    A signature binds content to a signer; it cannot bind it to an occasion. A genuine
-    receipt captured by anyone who saw it will verify here forever, unchanged, which is
-    the same property that makes offline verification years later possible at all.
-    If you need "has this been presented before?", the answer must come from state the
-    verifier keeps: record entries in ``avow.ledger`` (its chain rejects a replayed
-    entry against a pinned head) or carry a caller-supplied nonce inside the subject."""
+    The receipt's embedded key is not trusted. Replay defence requires external state;
+    see ``docs/OPERATIONS.md`` for the complete boundary."""
     _check_hash(receipt)
-    # Hex is case-insensitive, so pin by value, not by spelling: a lowercase embedded key
-    # and an uppercase pinned key are the SAME signer and must not read as a mismatch.
-    if receipt.public_key.lower() != expected_public_key.lower():
-        # Provenance failure, coded apart from a bytes failure: this receipt was signed
-        # by a key the caller does not trust, so its signature is never even checked.
-        raise SignerMismatch("receipt public key is not the expected signer")
+    _require_signer(receipt, expected_public_key)
     message = canonical_bytes(receipt.payload.model_dump(mode="json"))
-    # Malformed / wrong-length hex (bytes.fromhex, VerifyKey) raises ValueError; a
-    # bad signature raises BadSignatureError. Both are tamper failures, so we fail
-    # closed with a coded error rather than leaking a raw traceback.
-    try:
-        verify_key = VerifyKey(bytes.fromhex(expected_public_key))
-        verify_key.verify(message, bytes.fromhex(receipt.signature))
-    except (ValueError, BadSignatureError) as exc:
-        raise SignatureBytesInvalid("signature does not match payload") from exc
+    _check_signature_bytes(message, receipt.signature, expected_public_key)

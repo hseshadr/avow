@@ -57,7 +57,8 @@ class PayloadHashMismatch(AvowError):
     validly-signed receipt presented a second time is byte-identical to its first
     presentation and verifies exactly as it did then. Naming this error after a property
     the envelope does not have would be a claim it cannot keep. Replay of a *recorded*
-    entry is caught by the ledger chain (``avow.ledger_integrity``), never here."""
+    encoded ledger line copied into another position is caught by the chain
+    (``avow.ledger_integrity``); repeated ``append`` calls need caller-owned state."""
 
     code: ClassVar[str] = "avow.payload_hash_mismatch"
 
@@ -97,3 +98,33 @@ class LedgerHeadUnreadable(AvowError):
     falling back to the head the file computes for itself."""
 
     code: ClassVar[str] = "avow.ledger_head_unreadable"
+
+
+class LedgerLockTimeout(AvowError):
+    """The ledger could not obtain its process lock before the public deadline."""
+
+    code: ClassVar[str] = "avow.ledger_lock_timeout"
+
+
+class LedgerConfigurationInvalid(AvowError):
+    """Ledger paths or lock bounds cannot satisfy the persistence contract."""
+
+    code: ClassVar[str] = "avow.ledger_configuration_invalid"
+
+
+class LedgerLimitExceeded(AvowError):
+    """A ledger exceeded its supported byte, entry, or line-size boundary."""
+
+    code: ClassVar[str] = "avow.ledger_limit_exceeded"
+
+
+class LedgerHeadWriteFailed(AvowError):
+    """A complete pinned head could not be durably installed."""
+
+    code: ClassVar[str] = "avow.ledger_head_write_failed"
+
+
+class LedgerRecoveryRequired(AvowError):
+    """Ledger and convenience pin disagree, so an operator must investigate."""
+
+    code: ClassVar[str] = "avow.ledger_recovery_required"

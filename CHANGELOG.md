@@ -2,6 +2,96 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-13
+
+### Security and correctness
+
+- **0.4.1 supersedes 0.4.0 for every Python CLI ledger writer.** In 0.4.0 the
+  convenience head file was saved after the ledger append released its process lock.
+  Concurrent `assay score` processes could therefore leave that convenience pin behind
+  the complete ledger. If an operator treated the stale file as the current external
+  pin, truncation detection could be weakened. This patch holds one bounded process
+  lock across reading the current head, appending, syncing the ledger, and atomically
+  saving the new convenience head. Users of `assay score --ledger` should upgrade to
+  0.4.1. The registry artifacts for 0.4.0 remain historical; this repository has no
+  trusted-publisher workflow for yanking or deprecating an existing registry version,
+  and no maintainer credential was used.
+- Ledger lock acquisition now fails after **5.0 seconds** with the stable coded error
+  `avow.ledger_lock_timeout`, rather than waiting forever. A head that cannot be
+  durably installed raises `avow.ledger_head_write_failed`; it never reports success.
+- Invalid persistence configurations fail before writing: lock timeouts must be finite
+  and non-negative, and every CLI read/write role must use a filesystem-distinct path.
+  This includes exact paths, hard links, symlinks, aliasing parent directories, and
+  case/Unicode names the destination volume treats as identical; rejected commands
+  preserve existing request, key, receipt, ledger, and head bytes.
+- `assay score` stages and installs its receipt inside the same serialization boundary
+  as ledger/head persistence. An output failure no longer commits a ledger entry, and
+  concurrent writers sharing one output cannot publish an older receipt last. The
+  three files remain separate crash commits and recovery stays fail closed.
+- `keygen` stages and syncs both owner-only key artifacts, uses race-safe no-overwrite
+  claims, and
+  refuses to overwrite either destination. A failed second installation rolls back the
+  first rather than destroying an existing signing identity. The public single-file key
+  helpers and composite receipt output now use synced atomic replacements.
+  A replacement followed by directory-sync failure reports an explicitly unknown
+  old-or-new complete-file outcome; partial bytes are never installed.
+- The ledger continues to lock the data-file descriptor used by 0.4.0, preserving
+  mixed-version writer serialization during rolling upgrades. No public append API
+  gained a callback or CLI-specific transaction parameter.
+- A combined ledger/head append now requires its existing convenience pin to match the
+  locked ledger state before writing. A stale, malformed, or missing pin on a non-empty
+  ledger raises `avow.ledger_recovery_required`, so a later successful command cannot
+  silently absorb an entry whose earlier head update failed.
+- CLI validation and domain failures now emit only a stable code and safe schema field
+  path; settings are resolved only inside that boundary, so malformed `ASSAY_*`
+  environment values cannot leak through import-time tracebacks or help output. The
+  installed entry point also redacts parser errors before command dispatch, so rejected
+  arbitrary tokens never enter CLI output.
+- Append now reads only one bounded tail entry rather than the whole ledger. Read,
+  append, and verification enforce 64 MiB, 100,000-entry, and 64 KiB-line limits with
+  `avow.ledger_limit_exceeded`; the concurrency benchmark starts from 5,000 entries.
+  Canonical ledger lines use exactly one LF terminator: blank lines, CRLF, and partial
+  final lines fail closed consistently in both full verification and bounded append,
+  which never changes the malformed file.
+- A successful append flushes and `fsync`s the complete JSONL line before returning.
+  Head saves use a same-directory temporary file, file `fsync`, atomic replacement,
+  directory `fsync`, and failure cleanup. The documented RPO is zero relative to a
+  returned operation on supported local Unix filesystems. A crash between the ledger
+  and head commits fails closed against the older pin; it is never silently repaired.
+- Real-process regressions cover concurrent CLI writers, four concurrent library
+  writers, a held-lock timeout, immediate process exit after append, replacement and
+  sync failures, stale-pin rejection, truncation rejection, cleanup, and deadlock bounds.
+
+### Added
+
+- **A frozen operational contract** (`docs/OPERATIONS.md`) for privacy, data flow,
+  egress, plaintext retention, key/head custody, supported filesystems, recovery,
+  RPO, and intentionally unpromised automatic repair/RTO.
+- **Deterministic release benchmarks enforced locally, in pull-request CI, and before
+  trusted PyPI publication.** Fixed workloads predeclare p50/p95/p99 latency and peak
+  RSS ceilings for Python signing/verification, TypeScript signing/verification,
+  10,000-example classification, and a 200-append/four-process ledger run. The gate is
+  `uv run poe benchmark` plus `pnpm --dir ts benchmark`; a missed count, integrity
+  check, time, or memory ceiling exits non-zero. Ledger peak RSS is the maximum across
+  parent verification and every real append worker, not only the workers.
+- Executable privacy guards prove representative Python scoring/signing opens no
+  socket and creates no hidden persistence, and scan the TypeScript runtime for browser
+  egress/storage primitives.
+
+### Changed
+
+- All 17 legacy Python functions over the repository's 15-line readability ceiling
+  were decomposed behind shared typed contracts without changing receipt bytes,
+  metric answers, errors, or cross-language vectors. An AST contract now prevents
+  regressions across `src/`, `scripts/`, and `benchmarks/`.
+- Benchmark tooling is held to the same Ruff, strict mypy, and Xenon Grade A gate as
+  runtime source and mutation tooling.
+- README now links the operational contract at the runnable quickstart and states the
+  0.4.0 supersession without publishing a procedural abuse recipe.
+- Documentation now distinguishes encoded ledger-line reinsertion from submitting the
+  same signed receipt twice through `append`. The latter creates two valid sequenced
+  entries; semantic replay prevention requires a caller-owned nonce/request ID and state.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

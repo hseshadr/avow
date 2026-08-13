@@ -4,6 +4,7 @@ import pytest
 
 from assay.errors import (
     AssayError,
+    CliInputInvalid,
     EmptyRelevantSet,
     InsufficientSamples,
     InvalidAgreementRequest,
@@ -16,9 +17,14 @@ from assay.errors import (
 from avow.errors import (
     AvowError,
     CanonicalizationFailed,
+    LedgerConfigurationInvalid,
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
+    LedgerHeadWriteFailed,
     LedgerIntegrityError,
+    LedgerLimitExceeded,
+    LedgerLockTimeout,
+    LedgerRecoveryRequired,
     LedgerUnreadable,
     PayloadHashMismatch,
     SignatureBytesInvalid,
@@ -28,6 +34,7 @@ from avow.errors import (
 
 # The scoring face keeps its own ``assay.*`` catalog under ``AssayError``.
 _ASSAY_CODES = [
+    (CliInputInvalid, "assay.cli_input_invalid"),
     (InvalidScoreRequest, "assay.invalid_request"),
     (InvalidRankingRequest, "assay.invalid_ranking_request"),
     (InvalidAgreementRequest, "assay.invalid_agreement_request"),
@@ -52,6 +59,11 @@ _AVOW_CODES = [
     (LedgerUnreadable, "avow.ledger_unreadable"),
     (LedgerEntryMalformed, "avow.ledger_entry_malformed"),
     (LedgerHeadUnreadable, "avow.ledger_head_unreadable"),
+    (LedgerHeadWriteFailed, "avow.ledger_head_write_failed"),
+    (LedgerLockTimeout, "avow.ledger_lock_timeout"),
+    (LedgerConfigurationInvalid, "avow.ledger_configuration_invalid"),
+    (LedgerLimitExceeded, "avow.ledger_limit_exceeded"),
+    (LedgerRecoveryRequired, "avow.ledger_recovery_required"),
 ]
 
 

@@ -1,6 +1,6 @@
 {
   "name": "@edgeproc/avow",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publishConfig": {
     "access": "public"
   },
@@ -40,7 +40,8 @@
     "node": ">=22.13"
   },
   "files": [
-    "dist"
+    "dist",
+    "benchmarks"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -57,9 +58,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
+    "benchmark": "tsc -p tsconfig.build.json && node benchmarks/release.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "gate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "gate": "biome check . && tsc -p tsconfig.json --noEmit && vitest run --coverage && tsc -p tsconfig.build.json && node benchmarks/release.mjs"
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",
