@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-08-05
+## [0.4.0] - 2026-08-13
 
 ### Added
 - **An agreement face: `assay.agreement`, plus `assay.agreement_score` for a signed
