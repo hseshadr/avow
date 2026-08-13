@@ -24,6 +24,7 @@ from avow.errors import (
     LedgerIntegrityError,
     LedgerLimitExceeded,
     LedgerLockTimeout,
+    LedgerRecoveryRequired,
     LedgerUnreadable,
     PayloadHashMismatch,
     SignatureBytesInvalid,
@@ -62,6 +63,7 @@ _AVOW_CODES = [
     (LedgerLockTimeout, "avow.ledger_lock_timeout"),
     (LedgerConfigurationInvalid, "avow.ledger_configuration_invalid"),
     (LedgerLimitExceeded, "avow.ledger_limit_exceeded"),
+    (LedgerRecoveryRequired, "avow.ledger_recovery_required"),
 ]
 
 

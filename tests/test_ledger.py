@@ -19,6 +19,7 @@ from avow.errors import (
     LedgerIntegrityError,
     LedgerLimitExceeded,
     LedgerLockTimeout,
+    LedgerRecoveryRequired,
     LedgerUnreadable,
 )
 from avow.ledger import (
@@ -322,6 +323,76 @@ def test_should_bound_streamed_lines_and_entry_count(
     monkeypatch.setattr(ledger_module, "MAX_LEDGER_ENTRIES", 1)
     with pytest.raises(LedgerLimitExceeded):
         read_entries(crowded)
+
+
+def test_should_enforce_the_byte_cap_against_growth_after_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given one bounded entry and another writer that grows the opened file immediately
+    ledger, addition = tmp_path / "ledger.jsonl", tmp_path / "addition.jsonl"
+    _ledger_of(ledger, 0.1)
+    _ledger_of(addition, 0.2)
+    initial, extra = ledger.read_bytes(), addition.read_bytes()
+    monkeypatch.setattr(ledger_module, "MAX_LEDGER_BYTES", len(initial) + 1)
+    original = ledger_module._require_ledger_size
+
+    def grow_after_open(size: int) -> None:
+        original(size)
+        with ledger.open("ab") as handle:
+            handle.write(extra)
+
+    monkeypatch.setattr(ledger_module, "_require_ledger_size", grow_after_open)
+    with pytest.raises(LedgerLimitExceeded):
+        read_entries(ledger)
+
+
+def test_should_read_the_opened_inode_when_the_path_is_swapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given the path is atomically replaced only after read_entries has opened its inode
+    ledger, replacement = tmp_path / "ledger.jsonl", tmp_path / "replacement.jsonl"
+    _ledger_of(ledger, 0.1)
+    _ledger_of(replacement, 0.9)
+    original = ledger_module._require_ledger_size
+    swapped = False
+
+    def swap_after_open(size: int) -> None:
+        nonlocal swapped
+        original(size)
+        if not swapped:
+            os.replace(replacement, ledger)
+            swapped = True
+
+    monkeypatch.setattr(ledger_module, "_require_ledger_size", swap_after_open)
+    opened = read_entries(ledger)
+    assert ScoreReceipt.model_validate(opened[0].receipt).payload.score == 0.1
+    assert read_all(ledger, ScoreReceipt)[0].payload.score == 0.9
+
+
+def test_should_code_opened_descriptor_and_stream_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    _ledger_of(ledger, 0.1)
+
+    def refuse_metadata(_descriptor: int) -> os.stat_result:
+        raise OSError("descriptor metadata unavailable")
+
+    def refuse_read(_handle: object) -> list[object]:
+        raise OSError("stream read failed")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ledger_module.stat, "S_ISREG", lambda mode: False)
+        with pytest.raises(LedgerUnreadable):
+            read_entries(ledger)
+    with monkeypatch.context() as patched:
+        patched.setattr(ledger_module.os, "fstat", refuse_metadata)
+        with pytest.raises(LedgerUnreadable):
+            read_entries(ledger)
+    with monkeypatch.context() as patched:
+        patched.setattr(ledger_module, "_read_bounded_entries", refuse_read)
+        with pytest.raises(LedgerUnreadable):
+            read_entries(ledger)
 
 
 def test_should_refuse_to_replace_the_ledger_with_its_own_head(tmp_path: Path) -> None:
@@ -763,6 +834,48 @@ def test_should_keep_old_pin_and_fail_closed_when_atomic_head_replace_fails(
     assert sorted(path.name for path in tmp_path.iterdir()) == ["ledger.head", "ledger.jsonl"]
     with pytest.raises(LedgerIntegrityError):
         _verify(ledger, read_head(pin))
+    # Once the simulated fault clears, a later append still cannot absorb the unknown
+    # durable entry into a fresh convenience pin.
+    monkeypatch.undo()
+    before = ledger.read_bytes(), pin.read_bytes()
+    with pytest.raises(LedgerRecoveryRequired):
+        append_and_save_head(_receipt(0.3), path=ledger, head_path=pin)
+    assert (ledger.read_bytes(), pin.read_bytes()) == before
+
+
+def test_should_refuse_to_absorb_an_unacknowledged_append_into_a_later_pin(
+    tmp_path: Path,
+) -> None:
+    # Given one acknowledged append plus a crash-equivalent durable append whose head
+    # was never saved, leaving the old convenience pin behind
+    ledger, pin = tmp_path / "ledger.jsonl", tmp_path / "ledger.head"
+    acknowledged = append_and_save_head(_receipt(0.1), path=ledger, head_path=pin)
+    unknown = append(_receipt(0.2), path=ledger)
+    assert acknowledged.count == 1
+    assert unknown.count == 2
+    before = ledger.read_bytes(), pin.read_bytes()
+    # When a later combined append attempts to continue from that mismatch
+    with pytest.raises(LedgerRecoveryRequired):
+        append_and_save_head(_receipt(0.3), path=ledger, head_path=pin)
+    # Then it requires investigation before writing and preserves both artifacts exactly
+    assert (ledger.read_bytes(), pin.read_bytes()) == before
+    assert read_head(pin) == acknowledged
+
+
+@pytest.mark.parametrize("pin_state", ["missing", "malformed", "stale-empty"])
+def test_should_require_recovery_when_a_nonempty_ledger_has_no_matching_pin(
+    tmp_path: Path, pin_state: str
+) -> None:
+    ledger, pin = tmp_path / "ledger.jsonl", tmp_path / "ledger.head"
+    append(_receipt(0.1), path=ledger)
+    if pin_state == "malformed":
+        pin.write_text("not a head", encoding="utf-8")
+    elif pin_state == "stale-empty":
+        save_head(EMPTY_HEAD, path=pin)
+    before = ledger.read_bytes(), pin.read_bytes() if pin.exists() else None
+    with pytest.raises(LedgerRecoveryRequired):
+        append_and_save_head(_receipt(0.2), path=ledger, head_path=pin)
+    assert (ledger.read_bytes(), pin.read_bytes() if pin.exists() else None) == before
 
 
 def test_should_clean_staged_head_and_preserve_pin_when_file_sync_fails(

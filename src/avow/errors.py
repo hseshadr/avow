@@ -121,3 +121,9 @@ class LedgerHeadWriteFailed(AvowError):
     """A complete pinned head could not be durably installed."""
 
     code: ClassVar[str] = "avow.ledger_head_write_failed"
+
+
+class LedgerRecoveryRequired(AvowError):
+    """Ledger and convenience pin disagree, so an operator must investigate."""
+
+    code: ClassVar[str] = "avow.ledger_recovery_required"

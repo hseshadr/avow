@@ -45,6 +45,7 @@ from __future__ import annotations
 import fcntl
 import math
 import os
+import stat
 import tempfile
 import time
 from collections.abc import Iterator
@@ -64,6 +65,7 @@ from avow.errors import (
     LedgerIntegrityError,
     LedgerLimitExceeded,
     LedgerLockTimeout,
+    LedgerRecoveryRequired,
     LedgerUnreadable,
     SignatureInvalid,
 )
@@ -278,15 +280,26 @@ def append[S: BaseModel](
         return _append_locked(receipt, handle=handle, path=path)
 
 
-def _require_readable_file(path: Path) -> None:
-    """Fail closed unless ``path`` is a regular file this process can read.
-
-    ``is_file()`` rejects both the absent path and the directory-in-its-place case;
-    the access check rejects a file whose permissions deny reading."""
-    if not path.is_file():
+def _regular_file_size(handle: BinaryIO, path: Path) -> int:
+    """Validate the opened descriptor and close it on any metadata failure."""
+    try:
+        metadata = os.fstat(handle.fileno())
+    except OSError as exc:
+        handle.close()
+        raise LedgerUnreadable(f"ledger is not a readable file: {path}") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        handle.close()
         raise LedgerUnreadable(f"ledger is not a readable file: {path}")
-    if not os.access(path, os.R_OK):
-        raise LedgerUnreadable(f"ledger cannot be read (permission denied): {path}")
+    return metadata.st_size
+
+
+def _open_readable_ledger(path: Path) -> tuple[BinaryIO, int]:
+    """Open once and validate the actual inode, never a path checked before open."""
+    try:
+        handle = path.open("rb")
+    except OSError as exc:
+        raise LedgerUnreadable(f"ledger is not a readable file: {path}") from exc
+    return handle, _regular_file_size(handle, path)
 
 
 def _decode_complete_line(line: bytes) -> str:
@@ -301,7 +314,10 @@ def _decode_complete_line(line: bytes) -> str:
 def _read_bounded_entries(handle: BinaryIO) -> list[LedgerEntry]:
     """Stream a ledger into its explicitly bounded public tuple."""
     entries: list[LedgerEntry] = []
+    total = 0
     while line := handle.readline(MAX_LEDGER_LINE_BYTES + 1):
+        total += len(line)
+        _require_ledger_size(total)
         entries.append(_parse_entry(_decode_complete_line(line)))
         if len(entries) > MAX_LEDGER_ENTRIES:
             raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_ENTRIES} entries")
@@ -310,10 +326,13 @@ def _read_bounded_entries(handle: BinaryIO) -> list[LedgerEntry]:
 
 def read_entries(path: Path) -> tuple[LedgerEntry, ...]:
     """Read every entry within the documented byte, line, and count ceilings."""
-    _require_readable_file(path)
-    _require_ledger_size(path.stat().st_size)
-    with path.open("rb") as handle:
-        entries = _read_bounded_entries(handle)
+    handle, size = _open_readable_ledger(path)
+    try:
+        with handle:
+            _require_ledger_size(size)
+            entries = _read_bounded_entries(handle)
+    except OSError as exc:
+        raise LedgerUnreadable(f"ledger cannot be read: {path}") from exc
     return tuple(entries)
 
 
@@ -491,6 +510,22 @@ def require_distinct_paths(paths: tuple[Path, ...]) -> None:
                 raise LedgerConfigurationInvalid("persistence roles must use distinct paths")
 
 
+def _required_pin(path: Path) -> LedgerHead:
+    """Read a required pin and translate absence or damage to operator recovery."""
+    try:
+        return read_head(path)
+    except LedgerHeadUnreadable as exc:
+        raise LedgerRecoveryRequired("ledger head requires operator recovery") from exc
+
+
+def _require_current_pin(current: LedgerHead, path: Path) -> None:
+    """Refuse to absorb an unacknowledged ledger tail into a later pin."""
+    if current == EMPTY_HEAD and not (path.exists() or path.is_symlink()):
+        return
+    if _required_pin(path) != current:
+        raise LedgerRecoveryRequired("ledger head requires operator recovery")
+
+
 def append_and_save_head[S: BaseModel](
     receipt: SignedReceipt[S],
     *,
@@ -498,10 +533,11 @@ def append_and_save_head[S: BaseModel](
     head_path: Path,
     lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> LedgerHead:
-    """Append and save its convenience pin under one bounded process lock."""
+    """Append and save a matching pin, or require recovery, under one bounded lock."""
     require_distinct_paths((path, head_path))
     with _locked_ledger(path, lock_timeout_seconds) as handle:
         require_distinct_paths((path, head_path))
+        _require_current_pin(_current_locked_head(handle), head_path)
         head = _append_locked(receipt, handle=handle, path=path)
         save_head(head, path=head_path)
         return head

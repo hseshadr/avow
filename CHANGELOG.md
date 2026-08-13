@@ -24,6 +24,10 @@
   This includes exact paths, hard links, symlinks, aliasing parent directories, and
   case/Unicode names the destination volume treats as identical; rejected commands
   preserve existing request, key, receipt, ledger, and head bytes.
+- A combined ledger/head append now requires its existing convenience pin to match the
+  locked ledger state before writing. A stale, malformed, or missing pin on a non-empty
+  ledger raises `avow.ledger_recovery_required`, so a later successful command cannot
+  silently absorb an entry whose earlier head update failed.
 - CLI validation and domain failures now emit only a stable code and safe schema field
   path; settings are resolved only inside that boundary, so malformed `ASSAY_*`
   environment values cannot leak through import-time tracebacks or help output. The
