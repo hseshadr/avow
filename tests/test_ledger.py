@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import multiprocessing
 import os
 from pathlib import Path
 
@@ -11,7 +13,9 @@ from assay.receipt import ReceiptPayload, ScoreReceipt, payload_digest, sign_pay
 from avow.errors import (
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
+    LedgerHeadWriteFailed,
     LedgerIntegrityError,
+    LedgerLockTimeout,
     LedgerUnreadable,
 )
 from avow.ledger import (
@@ -19,6 +23,7 @@ from avow.ledger import (
     GENESIS_HASH,
     LedgerHead,
     append,
+    append_and_save_head,
     current_head,
     entry_hash,
     read_all,
@@ -68,6 +73,23 @@ def _rewrite(path: Path, lines: list[str]) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def _append_many_process(ledger: Path, head: Path, start: int, count: int) -> None:
+    for index in range(start, start + count):
+        append_and_save_head(_receipt(index / 1000), path=ledger, head_path=head)
+
+
+def _hold_ledger_lock(path: Path, ready: object, release: object) -> None:
+    with path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        ready.set()  # type: ignore[attr-defined]
+        release.wait(timeout=10)  # type: ignore[attr-defined]
+
+
+def _append_then_exit(path: Path) -> None:
+    append(_receipt(0.42), path=path)
+    os._exit(0)
+
+
 def test_should_append_only_and_read_back_in_order(tmp_path: Path) -> None:
     # Given two receipts appended to a fresh ledger
     path = tmp_path / "ledger.jsonl"
@@ -94,6 +116,57 @@ def test_should_return_a_head_that_advances_with_every_append(tmp_path: Path) ->
     assert second != EMPTY_HEAD
     # And a ledger verifies against the head its last append returned
     assert len(_verify(path, second)) == 2
+
+
+def test_should_serialize_ledger_and_saved_head_across_real_processes(tmp_path: Path) -> None:
+    # Given four independent writers sharing one ledger and one convenience pin
+    ledger = tmp_path / "ledger.jsonl"
+    head_path = tmp_path / "ledger.head"
+    context = multiprocessing.get_context("spawn")
+    workers = [
+        context.Process(target=_append_many_process, args=(ledger, head_path, i * 10, 10))
+        for i in range(4)
+    ]
+    # When all writers append concurrently
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=15)
+    # Then none deadlocks and the saved pin is exactly the complete serialized history
+    assert [worker.exitcode for worker in workers] == [0, 0, 0, 0]
+    pinned = read_head(head_path)
+    assert pinned.count == 40
+    assert len(_verify(ledger, pinned)) == 40
+
+
+def test_should_time_out_with_a_coded_error_when_another_process_holds_lock(
+    tmp_path: Path,
+) -> None:
+    # Given another real process holds the ledger lock beyond this append's bound
+    ledger = tmp_path / "ledger.jsonl"
+    context = multiprocessing.get_context("spawn")
+    ready, release = context.Event(), context.Event()
+    holder = context.Process(target=_hold_ledger_lock, args=(ledger, ready, release))
+    holder.start()
+    assert ready.wait(timeout=5)
+    # When append reaches its 50ms timeout, it fails without writing or deadlocking
+    with pytest.raises(LedgerLockTimeout, match=r"0\.050"):
+        append(_receipt(0.1), path=ledger, lock_timeout_seconds=0.05)
+    assert ledger.read_text(encoding="utf-8") == ""
+    release.set()
+    holder.join(timeout=5)
+    assert holder.exitcode == 0
+
+
+def test_should_survive_immediate_process_exit_after_append_returns(tmp_path: Path) -> None:
+    # Given a child appends and exits without Python cleanup after append reports success
+    ledger = tmp_path / "ledger.jsonl"
+    worker = multiprocessing.get_context("spawn").Process(target=_append_then_exit, args=(ledger,))
+    worker.start()
+    worker.join(timeout=10)
+    # Then the returned operation was already durable and forms a verifiable full line
+    assert worker.exitcode == 0
+    assert len(_verify(ledger, current_head(ledger))) == 1
 
 
 def test_should_fail_closed_when_ledger_is_absent(tmp_path: Path) -> None:
@@ -407,6 +480,48 @@ def test_should_round_trip_a_pinned_head_through_a_file(tmp_path: Path) -> None:
     # Then it is the same pin, and the ledger verifies against it
     assert read_head(pin) == head
     assert len(_verify(path, read_head(pin))) == 2
+
+
+def test_should_keep_old_pin_and_fail_closed_when_atomic_head_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given a valid one-entry ledger and pin, and a filesystem that refuses replacement
+    ledger = tmp_path / "ledger.jsonl"
+    pin = tmp_path / "ledger.head"
+    first = append_and_save_head(_receipt(0.1), path=ledger, head_path=pin)
+
+    def refuse_replace(source: Path, target: Path) -> None:
+        raise OSError("staged replacement failure")
+
+    monkeypatch.setattr(os, "replace", refuse_replace)
+    # When the next durable append cannot atomically replace the convenience pin
+    with pytest.raises(LedgerHeadWriteFailed, match="ledger head"):
+        append_and_save_head(_receipt(0.2), path=ledger, head_path=pin)
+    # Then the old pin remains complete, temporary files are cleaned, and verification
+    # fails closed against it instead of blessing a truncated version of the history
+    assert read_head(pin) == first
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["ledger.head", "ledger.jsonl"]
+    with pytest.raises(LedgerIntegrityError):
+        _verify(ledger, read_head(pin))
+
+
+def test_should_clean_staged_head_and_preserve_pin_when_file_sync_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given one complete pin and a filesystem that refuses to sync its replacement
+    pin = tmp_path / "ledger.head"
+    save_head(EMPTY_HEAD, path=pin)
+
+    def refuse_sync(descriptor: int) -> None:
+        raise OSError("staged sync failure")
+
+    monkeypatch.setattr(os, "fsync", refuse_sync)
+    # When save attempts a new head, it reports a coded failure
+    with pytest.raises(LedgerHeadWriteFailed, match="ledger head"):
+        save_head(LedgerHead(count=1, head_hash="sha256:" + "ab" * 32), path=pin)
+    # Then the previous pin is intact and no partial temporary file remains
+    assert read_head(pin) == EMPTY_HEAD
+    assert tuple(tmp_path.iterdir()) == (pin,)
 
 
 def test_should_fail_closed_when_the_pinned_head_is_missing_or_unusable(

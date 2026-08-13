@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-13
+
+### Security and correctness
+
+- **0.4.1 supersedes 0.4.0 for every Python CLI ledger writer.** In 0.4.0 the
+  convenience head file was saved after the ledger append released its process lock.
+  Concurrent `assay score` processes could therefore leave that convenience pin behind
+  the complete ledger. If an operator treated the stale file as the current external
+  pin, truncation detection could be weakened. This patch holds one bounded process
+  lock across reading the current head, appending, syncing the ledger, and atomically
+  saving the new convenience head. Users of `assay score --ledger` should upgrade to
+  0.4.1. The registry artifacts for 0.4.0 remain historical; this repository has no
+  trusted-publisher workflow for yanking or deprecating an existing registry version,
+  and no maintainer credential was used.
+- Ledger lock acquisition now fails after **5.0 seconds** with the stable coded error
+  `avow.ledger_lock_timeout`, rather than waiting forever. A head that cannot be
+  durably installed raises `avow.ledger_head_write_failed`; it never reports success.
+- A successful append flushes and `fsync`s the complete JSONL line before returning.
+  Head saves use a same-directory temporary file, file `fsync`, atomic replacement,
+  directory `fsync`, and failure cleanup. The documented RPO is zero relative to a
+  returned operation on supported local Unix filesystems. A crash between the ledger
+  and head commits fails closed against the older pin; it is never silently repaired.
+- Real-process regressions cover concurrent CLI writers, four concurrent library
+  writers, a held-lock timeout, immediate process exit after append, replacement and
+  sync failures, stale-pin rejection, truncation rejection, cleanup, and deadlock bounds.
+
+### Added
+
+- **A frozen operational contract** (`docs/OPERATIONS.md`) for privacy, data flow,
+  egress, plaintext retention, key/head custody, supported filesystems, recovery,
+  RPO, and intentionally unpromised automatic repair/RTO.
+- **Deterministic release benchmarks enforced locally, in pull-request CI, and before
+  trusted PyPI publication.** Fixed workloads predeclare p50/p95/p99 latency and peak
+  RSS ceilings for Python signing/verification, TypeScript signing/verification,
+  10,000-example classification, and a 200-append/four-process ledger run. The gate is
+  `uv run poe benchmark` plus `pnpm --dir ts benchmark`; a missed count, integrity
+  check, time, or memory ceiling exits non-zero.
+- Executable privacy guards prove representative Python scoring/signing opens no
+  socket and creates no hidden persistence, and scan the TypeScript runtime for browser
+  egress/storage primitives.
+
+### Changed
+
+- All 17 legacy Python functions over the repository's 15-line readability ceiling
+  were decomposed behind shared typed contracts without changing receipt bytes,
+  metric answers, errors, or cross-language vectors. An AST contract now prevents
+  regressions across `src/`, `scripts/`, and `benchmarks/`.
+- Benchmark tooling is held to the same Ruff, strict mypy, and Xenon Grade A gate as
+  runtime source and mutation tooling.
+- README now links the operational contract at the runnable quickstart and states the
+  0.4.0 supersession without publishing a procedural abuse recipe.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

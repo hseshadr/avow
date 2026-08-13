@@ -97,3 +97,15 @@ class LedgerHeadUnreadable(AvowError):
     falling back to the head the file computes for itself."""
 
     code: ClassVar[str] = "avow.ledger_head_unreadable"
+
+
+class LedgerLockTimeout(AvowError):
+    """The ledger could not obtain its process lock before the public deadline."""
+
+    code: ClassVar[str] = "avow.ledger_lock_timeout"
+
+
+class LedgerHeadWriteFailed(AvowError):
+    """A complete pinned head could not be durably installed."""
+
+    code: ClassVar[str] = "avow.ledger_head_write_failed"

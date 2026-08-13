@@ -18,7 +18,9 @@ from avow.errors import (
     CanonicalizationFailed,
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
+    LedgerHeadWriteFailed,
     LedgerIntegrityError,
+    LedgerLockTimeout,
     LedgerUnreadable,
     PayloadHashMismatch,
     SignatureBytesInvalid,
@@ -52,6 +54,8 @@ _AVOW_CODES = [
     (LedgerUnreadable, "avow.ledger_unreadable"),
     (LedgerEntryMalformed, "avow.ledger_entry_malformed"),
     (LedgerHeadUnreadable, "avow.ledger_head_unreadable"),
+    (LedgerHeadWriteFailed, "avow.ledger_head_write_failed"),
+    (LedgerLockTimeout, "avow.ledger_lock_timeout"),
 ]
 
 

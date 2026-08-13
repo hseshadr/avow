@@ -44,6 +44,10 @@ from __future__ import annotations
 
 import fcntl
 import os
+import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TextIO
 
@@ -54,7 +58,9 @@ from avow.envelope import SignedReceipt, payload_digest
 from avow.errors import (
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
+    LedgerHeadWriteFailed,
     LedgerIntegrityError,
+    LedgerLockTimeout,
     LedgerUnreadable,
     SignatureInvalid,
 )
@@ -63,6 +69,8 @@ from avow.verify import verify_receipt
 # The predecessor of the first entry. No real digest can collide with it, so an entry
 # claiming genesis provenance can only ever be at position 0.
 GENESIS_HASH = "sha256:" + "0" * 64
+DEFAULT_LOCK_TIMEOUT_SECONDS = 5.0
+_LOCK_POLL_SECONDS = 0.01
 
 
 class LedgerHead(BaseModel):
@@ -138,20 +146,65 @@ def _head_of_lines(lines: list[str]) -> LedgerHead:
     return _head_after(_parse_entry(lines[-1]))
 
 
-def append[S: BaseModel](receipt: SignedReceipt[S], *, path: Path) -> LedgerHead:
-    """Append one receipt as the next link in the chain; return the ledger's NEW head.
+def _acquire_lock(handle: TextIO, timeout_seconds: float) -> None:
+    """Take the ledger lock or fail with a stable code at the bounded deadline."""
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                message = f"ledger lock not acquired within {timeout_seconds:.3f} seconds"
+                raise LedgerLockTimeout(message) from exc
+            time.sleep(min(_LOCK_POLL_SECONDS, remaining))
 
-    Opened ``"a+"`` (``O_APPEND`` — every write lands at end-of-file) under an exclusive
-    advisory lock held across the read AND the write, so two concurrent appenders can
-    neither interleave a half-written line nor chain two entries onto one predecessor.
 
-    Pin the returned head somewhere the writer of this file cannot reach. Without it,
-    ``verify_integrity`` cannot tell this ledger from a truncated copy of it."""
+@contextmanager
+def _locked_ledger(path: Path, timeout_seconds: float) -> Iterator[TextIO]:
+    """Open the append-only ledger and hold its process lock for the caller."""
     with path.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        entry = _link_onto(_head_of_lines(_open_lines(handle)), receipt)
-        handle.write(entry.model_dump_json() + "\n")
+        _acquire_lock(handle, timeout_seconds)
+        try:
+            yield handle
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _sync_directory(path: Path) -> None:
+    """Persist a directory entry or replacement on an in-scope local filesystem."""
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _append_locked[S: BaseModel](
+    receipt: SignedReceipt[S], *, handle: TextIO, path: Path
+) -> LedgerHead:
+    """Append and durably flush while the caller holds the ledger lock."""
+    entry = _link_onto(_head_of_lines(_open_lines(handle)), receipt)
+    handle.write(entry.model_dump_json() + "\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+    _sync_directory(path.parent)
     return _head_after(entry)
+
+
+def append[S: BaseModel](
+    receipt: SignedReceipt[S],
+    *,
+    path: Path,
+    lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+) -> LedgerHead:
+    """Durably append under a bounded process lock and return the new head.
+
+    Export the returned head beyond the ledger writer; otherwise truncation is not
+    detectable. See ``docs/OPERATIONS.md`` for failure and recovery bounds."""
+    with _locked_ledger(path, lock_timeout_seconds) as handle:
+        return _append_locked(receipt, handle=handle, path=path)
 
 
 def _require_readable_file(path: Path) -> None:
@@ -249,17 +302,7 @@ def verify_integrity[S: BaseModel](
     expected_public_key: str,
     expected_head: LedgerHead,
 ) -> tuple[SignedReceipt[S], ...]:
-    """Return all receipts, raising unless the chain ends at the pinned head AND every
-    entry passes hash + signature verification.
-
-    Both pins are read out-of-band and neither is ever taken from the file being
-    checked: ``expected_public_key`` (the ``.pub`` from ``keygen``) says *who* may write
-    entries, ``expected_head`` (from ``append``) says *which* entries there are. A
-    ledger that satisfies one and not the other is not verified.
-
-    Entries are checked before the chain purely for diagnostics: an edit *inside* a line
-    breaks that line's signature AND every link after it, and the per-entry failure is
-    the one that names which line went wrong."""
+    """Require every signature and link plus both caller-supplied pins."""
     entries = read_entries(path)
     receipts = tuple(_entry_receipt(entry, receipt_type) for entry in entries)
     for receipt in receipts:
@@ -268,12 +311,56 @@ def verify_integrity[S: BaseModel](
     return receipts
 
 
+def _stage_head(head: LedgerHead, path: Path) -> Path:
+    """Write and sync a complete head in the destination directory."""
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(head.model_dump_json() + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        Path(name).unlink(missing_ok=True)
+        raise
+    return Path(name)
+
+
+def _install_head(head: LedgerHead, path: Path) -> None:
+    """Atomically install a staged head, cleaning up on every failure."""
+    staged = _stage_head(head, path)
+    try:
+        os.replace(staged, path)
+        _sync_directory(path.parent)
+    except OSError as exc:
+        staged.unlink(missing_ok=True)
+        raise LedgerHeadWriteFailed(f"could not durably write ledger head: {path}") from exc
+
+
 def save_head(head: LedgerHead, *, path: Path) -> None:
     """Write a head for the operator to carry out-of-band.
 
     Writing it *next to the ledger* is a convenience for copying it elsewhere, never a
     control: anyone who can rewrite the ledger can rewrite a file beside it."""
-    path.write_text(head.model_dump_json() + "\n", encoding="utf-8")
+    try:
+        _install_head(head, path)
+    except OSError as exc:
+        raise LedgerHeadWriteFailed(f"could not durably write ledger head: {path}") from exc
+
+
+def append_and_save_head[S: BaseModel](
+    receipt: SignedReceipt[S],
+    *,
+    path: Path,
+    head_path: Path,
+    lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+) -> LedgerHead:
+    """Append and atomically save its convenience pin under one process lock.
+
+    Export the head beyond the ledger writer for an actual truncation boundary."""
+    with _locked_ledger(path, lock_timeout_seconds) as handle:
+        head = _append_locked(receipt, handle=handle, path=path)
+        save_head(head, path=head_path)
+        return head
 
 
 def read_head(path: Path) -> LedgerHead:
