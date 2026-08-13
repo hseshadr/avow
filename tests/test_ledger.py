@@ -11,6 +11,7 @@ from nacl.signing import SigningKey
 
 from assay.receipt import ReceiptPayload, ScoreReceipt, payload_digest, sign_payload
 from avow.errors import (
+    AvowError,
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
     LedgerHeadWriteFailed,
@@ -156,6 +157,60 @@ def test_should_time_out_with_a_coded_error_when_another_process_holds_lock(
     release.set()
     holder.join(timeout=5)
     assert holder.exitcode == 0
+
+
+@pytest.mark.parametrize("timeout", [-0.1, float("inf"), float("nan")])
+def test_should_reject_an_unbounded_lock_timeout_before_writing(
+    tmp_path: Path, timeout: float
+) -> None:
+    # Given a timeout that cannot express one finite, non-negative deadline
+    ledger = tmp_path / "ledger.jsonl"
+    # When append is asked to use it, the malformed boundary fails closed and coded
+    with pytest.raises(AvowError) as caught:
+        append(_receipt(0.1), path=ledger, lock_timeout_seconds=timeout)
+    assert caught.value.code == "avow.ledger_configuration_invalid"
+    assert not ledger.exists()
+
+
+def test_should_refuse_to_replace_the_ledger_with_its_own_head(tmp_path: Path) -> None:
+    # Given one path is mistakenly supplied as both append log and convenience pin
+    ledger = tmp_path / "ledger.jsonl"
+    # When the combined operation validates its two persistence boundaries
+    with pytest.raises(AvowError) as caught:
+        append_and_save_head(_receipt(0.1), path=ledger, head_path=ledger)
+    # Then it fails before creating or replacing anything, with a stable coded cause
+    assert caught.value.code == "avow.ledger_configuration_invalid"
+    assert not ledger.exists()
+
+
+def test_should_refuse_a_head_hard_linked_to_the_existing_ledger(tmp_path: Path) -> None:
+    # Given two path spellings are hard links to the same existing ledger inode
+    ledger, alias = tmp_path / "ledger.jsonl", tmp_path / "ledger.head"
+    first = append(_receipt(0.1), path=ledger)
+    os.link(ledger, alias)
+    # When the combined operation checks the persistence boundary
+    with pytest.raises(AvowError) as caught:
+        append_and_save_head(_receipt(0.2), path=ledger, head_path=alias)
+    # Then it refuses before either name changes and preserves the original history
+    assert caught.value.code == "avow.ledger_configuration_invalid"
+    assert current_head(ledger) == first
+    assert current_head(alias) == first
+
+
+def test_should_code_a_persistence_path_resolution_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given the filesystem refuses to resolve whether the two persistence paths alias
+    def refuse_resolution(left: Path, right: Path) -> bool:
+        raise OSError("path resolution unavailable")
+
+    monkeypatch.setattr(Path, "samefile", refuse_resolution)
+    # When combined persistence validates those paths, it fails closed and coded
+    with pytest.raises(AvowError) as caught:
+        append_and_save_head(
+            _receipt(0.1), path=tmp_path / "ledger.jsonl", head_path=tmp_path / "ledger.head"
+        )
+    assert caught.value.code == "avow.ledger_configuration_invalid"
 
 
 def test_should_survive_immediate_process_exit_after_append_returns(tmp_path: Path) -> None:

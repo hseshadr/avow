@@ -19,6 +19,8 @@
 - Ledger lock acquisition now fails after **5.0 seconds** with the stable coded error
   `avow.ledger_lock_timeout`, rather than waiting forever. A head that cannot be
   durably installed raises `avow.ledger_head_write_failed`; it never reports success.
+- Invalid persistence configurations fail before writing: lock timeouts must be finite
+  and non-negative, and the ledger and convenience head must use distinct paths.
 - A successful append flushes and `fsync`s the complete JSONL line before returning.
   Head saves use a same-directory temporary file, file `fsync`, atomic replacement,
   directory `fsync`, and failure cleanup. The documented RPO is zero relative to a

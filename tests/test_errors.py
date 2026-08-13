@@ -16,6 +16,7 @@ from assay.errors import (
 from avow.errors import (
     AvowError,
     CanonicalizationFailed,
+    LedgerConfigurationInvalid,
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
     LedgerHeadWriteFailed,
@@ -56,6 +57,7 @@ _AVOW_CODES = [
     (LedgerHeadUnreadable, "avow.ledger_head_unreadable"),
     (LedgerHeadWriteFailed, "avow.ledger_head_write_failed"),
     (LedgerLockTimeout, "avow.ledger_lock_timeout"),
+    (LedgerConfigurationInvalid, "avow.ledger_configuration_invalid"),
 ]
 
 

@@ -105,6 +105,12 @@ class LedgerLockTimeout(AvowError):
     code: ClassVar[str] = "avow.ledger_lock_timeout"
 
 
+class LedgerConfigurationInvalid(AvowError):
+    """Ledger paths or lock bounds cannot satisfy the persistence contract."""
+
+    code: ClassVar[str] = "avow.ledger_configuration_invalid"
+
+
 class LedgerHeadWriteFailed(AvowError):
     """A complete pinned head could not be durably installed."""
 

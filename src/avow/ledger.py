@@ -43,6 +43,7 @@ the head its operator pinned, which is the case the old zero-entry pass could no
 from __future__ import annotations
 
 import fcntl
+import math
 import os
 import tempfile
 import time
@@ -56,6 +57,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from avow.canonical import JsonValue, content_hash
 from avow.envelope import SignedReceipt, payload_digest
 from avow.errors import (
+    LedgerConfigurationInvalid,
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
     LedgerHeadWriteFailed,
@@ -161,9 +163,17 @@ def _acquire_lock(handle: TextIO, timeout_seconds: float) -> None:
             time.sleep(min(_LOCK_POLL_SECONDS, remaining))
 
 
+def _require_bounded_timeout(timeout_seconds: float) -> None:
+    """Reject a deadline that could wait forever or predate the call."""
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        message = "ledger lock timeout must be one finite, non-negative number"
+        raise LedgerConfigurationInvalid(message)
+
+
 @contextmanager
 def _locked_ledger(path: Path, timeout_seconds: float) -> Iterator[TextIO]:
     """Open the append-only ledger and hold its process lock for the caller."""
+    _require_bounded_timeout(timeout_seconds)
     with path.open("a+", encoding="utf-8") as handle:
         _acquire_lock(handle, timeout_seconds)
         try:
@@ -347,6 +357,22 @@ def save_head(head: LedgerHead, *, path: Path) -> None:
         raise LedgerHeadWriteFailed(f"could not durably write ledger head: {path}") from exc
 
 
+def _paths_alias(left: Path, right: Path) -> bool:
+    """Whether two path spellings name, or would name, the same filesystem entry."""
+    try:
+        return left.samefile(right)
+    except FileNotFoundError:
+        return left.resolve() == right.resolve()
+    except OSError as exc:
+        raise LedgerConfigurationInvalid("ledger persistence paths could not be resolved") from exc
+
+
+def _require_distinct_paths(ledger: Path, head: Path) -> None:
+    """Protect the append log from replacement by its convenience head."""
+    if _paths_alias(ledger, head):
+        raise LedgerConfigurationInvalid("ledger and head must use distinct paths")
+
+
 def append_and_save_head[S: BaseModel](
     receipt: SignedReceipt[S],
     *,
@@ -357,6 +383,7 @@ def append_and_save_head[S: BaseModel](
     """Append and atomically save its convenience pin under one process lock.
 
     Export the head beyond the ledger writer for an actual truncation boundary."""
+    _require_distinct_paths(path, head_path)
     with _locked_ledger(path, lock_timeout_seconds) as handle:
         head = _append_locked(receipt, handle=handle, path=path)
         save_head(head, path=head_path)
