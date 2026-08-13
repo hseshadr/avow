@@ -22,10 +22,15 @@
 - Invalid persistence configurations fail before writing: lock timeouts must be finite
   and non-negative, and the ledger and convenience head must use distinct paths.
 - CLI validation and domain failures now emit only a stable code and safe schema field
-  path; raw exception messages and caller-controlled values never enter CLI output.
+  path; settings are resolved only inside that boundary, so malformed `ASSAY_*`
+  environment values cannot leak through import-time tracebacks or help output.
+  Raw exception messages and caller-controlled values never enter CLI output.
 - Append now reads only one bounded tail entry rather than the whole ledger. Read,
   append, and verification enforce 64 MiB, 100,000-entry, and 64 KiB-line limits with
   `avow.ledger_limit_exceeded`; the concurrency benchmark starts from 5,000 entries.
+  Canonical ledger lines use exactly one LF terminator: blank lines, CRLF, and partial
+  final lines fail closed consistently in both full verification and bounded append,
+  which never changes the malformed file.
 - A successful append flushes and `fsync`s the complete JSONL line before returning.
   Head saves use a same-directory temporary file, file `fsync`, atomic replacement,
   directory `fsync`, and failure cleanup. The documented RPO is zero relative to a

@@ -250,21 +250,71 @@ def test_should_reject_an_oversized_or_non_utf8_final_line(
         append(_receipt(0.1), path=binary)
 
 
-def test_should_bound_direct_tail_decoding_and_treat_blank_as_empty() -> None:
-    # The bounded decoder itself refuses one over-cap line and accepts an empty tail
+def test_should_bound_direct_tail_decoding_and_reject_a_blank_line() -> None:
+    # The bounded decoder refuses both an over-cap line and a non-entry blank line
     with pytest.raises(LedgerLimitExceeded):
         _decode_entry_line(b"x" * (ledger_module.MAX_LEDGER_LINE_BYTES + 1))
-    assert _decode_last_line(b"\n", truncated=False) is None
+    with pytest.raises(LedgerEntryMalformed, match="blank"):
+        _decode_last_line(b"\n", truncated=False)
+
+
+def test_should_reject_a_blank_tail_without_corrupting_the_chain(tmp_path: Path) -> None:
+    # Given a valid chain is followed by more blank bytes than bounded tail recovery reads
+    ledger = tmp_path / "ledger.jsonl"
+    head = append(_receipt(0.1), path=ledger)
+    with ledger.open("ab") as handle:
+        handle.write(b"\n" * 70_000)
+    before = ledger.read_bytes()
+    # Then both full verification and O(1) append reject the same malformed format
+    with pytest.raises(LedgerEntryMalformed, match="blank"):
+        _verify(ledger, head)
+    with pytest.raises(LedgerEntryMalformed, match="blank"):
+        append(_receipt(0.2), path=ledger)
+    # And a rejected append never resets the head or changes one byte of history
+    assert ledger.read_bytes() == before
+
+
+@pytest.mark.parametrize("ending", [b"\n\n", b"\r\n", b""])
+def test_should_reject_noncanonical_line_endings_before_append(
+    tmp_path: Path, ending: bytes
+) -> None:
+    # Given a genuine entry ends in a blank line, CRLF, or an incomplete partial line
+    ledger = tmp_path / "ledger.jsonl"
+    append(_receipt(0.1), path=ledger)
+    ledger.write_bytes(ledger.read_bytes()[:-1] + ending)
+    before = ledger.read_bytes()
+    # Then streaming read and tail recovery agree it is not canonical JSONL
+    with pytest.raises(LedgerEntryMalformed):
+        read_entries(ledger)
+    with pytest.raises(LedgerEntryMalformed):
+        append(_receipt(0.2), path=ledger)
+    assert ledger.read_bytes() == before
+
+
+def test_should_count_both_crlf_bytes_at_the_line_ceiling(tmp_path: Path) -> None:
+    # Given a genuine entry is padded to 65,535 content bytes plus two CRLF bytes
+    ledger = tmp_path / "ledger.jsonl"
+    append(_receipt(0.1), path=ledger)
+    content = ledger.read_bytes()[:-1]
+    padding = b" " * (ledger_module.MAX_LEDGER_LINE_BYTES - 1 - len(content))
+    ledger.write_bytes(content + padding + b"\r\n")
+    before = ledger.read_bytes()
+    assert len(before) == ledger_module.MAX_LEDGER_LINE_BYTES + 1
+    # Then both readers count the actual encoded bytes and append changes nothing
+    with pytest.raises(LedgerLimitExceeded):
+        read_entries(ledger)
+    with pytest.raises(LedgerLimitExceeded):
+        append(_receipt(0.2), path=ledger)
+    assert ledger.read_bytes() == before
 
 
 def test_should_bound_streamed_lines_and_entry_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given blank lines plus either an oversized line or too many bounded entries
+    # Given either an oversized line or too many bounded entries
     oversized, crowded = tmp_path / "oversized.jsonl", tmp_path / "crowded.jsonl"
-    oversized.write_text("\n" + "x" * 40 + "\n", encoding="utf-8")
+    oversized.write_text("x" * 40 + "\n", encoding="utf-8")
     _ledger_of(crowded, 0.1, 0.2)
-    crowded.write_text("\n" + crowded.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(ledger_module, "MAX_LEDGER_LINE_BYTES", 32)
     with pytest.raises(LedgerLimitExceeded):
         read_entries(oversized)

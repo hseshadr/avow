@@ -50,7 +50,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TextIO
+from typing import BinaryIO, TextIO
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -144,34 +144,38 @@ def _require_ledger_size(size: int) -> None:
         raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_BYTES} bytes")
 
 
-def _last_content(tail: bytes) -> bytes | None:
-    """Remove final newlines; an all-blank tail represents an empty ledger."""
-    content = tail.rstrip(b"\r\n")
-    return content or None
+def _last_content(tail: bytes) -> bytes:
+    """Return bytes before one canonical LF, rejecting a partial final line."""
+    if not tail.endswith(b"\n"):
+        raise LedgerEntryMalformed("ledger final line is incomplete")
+    return tail[:-1]
 
 
-def _require_complete_tail(content: bytes, *, truncated: bool) -> None:
+def _require_complete_tail(tail: bytes, *, truncated: bool) -> None:
     """Reject a tail whose final line began before the bounded read."""
+    content = tail[:-1] if tail.endswith(b"\n") else tail
     if truncated and b"\n" not in content:
         raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
 
 
 def _decode_entry_line(line: bytes) -> str:
-    """Decode one size-bounded UTF-8 ledger line with a stable malformed error."""
+    """Decode one canonical, size-bounded JSONL content segment."""
     if len(line) + 1 > MAX_LEDGER_LINE_BYTES:
         raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
+    if not line.strip():
+        raise LedgerEntryMalformed("ledger contains a blank line")
+    if line.endswith(b"\r"):
+        raise LedgerEntryMalformed("ledger lines must use LF endings")
     try:
         return line.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise LedgerEntryMalformed("ledger entry is not valid UTF-8") from exc
 
 
-def _decode_last_line(tail: bytes, *, truncated: bool) -> str | None:
+def _decode_last_line(tail: bytes, *, truncated: bool) -> str:
     """Decode one bounded tail, refusing an incomplete oversized final line."""
+    _require_complete_tail(tail, truncated=truncated)
     content = _last_content(tail)
-    if content is None:
-        return None
-    _require_complete_tail(content, truncated=truncated)
     return _decode_entry_line(content.rsplit(b"\n", maxsplit=1)[-1])
 
 
@@ -285,15 +289,20 @@ def _require_readable_file(path: Path) -> None:
         raise LedgerUnreadable(f"ledger cannot be read (permission denied): {path}")
 
 
-def _read_bounded_entries(handle: TextIO) -> list[LedgerEntry]:
+def _decode_complete_line(line: bytes) -> str:
+    """Decode one complete encoded line with exact terminator accounting."""
+    if len(line) > MAX_LEDGER_LINE_BYTES:
+        raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
+    if not line.endswith(b"\n"):
+        raise LedgerEntryMalformed("ledger final line is incomplete")
+    return _decode_entry_line(line[:-1])
+
+
+def _read_bounded_entries(handle: BinaryIO) -> list[LedgerEntry]:
     """Stream a ledger into its explicitly bounded public tuple."""
     entries: list[LedgerEntry] = []
     while line := handle.readline(MAX_LEDGER_LINE_BYTES + 1):
-        if not line.strip():
-            continue
-        if len(line.encode()) > MAX_LEDGER_LINE_BYTES:
-            raise LedgerLimitExceeded(f"ledger line exceeds {MAX_LEDGER_LINE_BYTES} bytes")
-        entries.append(_parse_entry(line))
+        entries.append(_parse_entry(_decode_complete_line(line)))
         if len(entries) > MAX_LEDGER_ENTRIES:
             raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_ENTRIES} entries")
     return entries
@@ -303,7 +312,7 @@ def read_entries(path: Path) -> tuple[LedgerEntry, ...]:
     """Read every entry within the documented byte, line, and count ceilings."""
     _require_readable_file(path)
     _require_ledger_size(path.stat().st_size)
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("rb") as handle:
         entries = _read_bounded_entries(handle)
     return tuple(entries)
 
