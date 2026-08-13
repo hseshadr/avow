@@ -791,7 +791,7 @@ def test_should_reject_an_entry_that_claims_a_position_it_is_not_in(tmp_path: Pa
         _verify(path, pinned)
 
 
-def test_should_reject_a_ledger_with_a_replayed_entry(tmp_path: Path) -> None:
+def test_should_reject_a_ledger_with_a_reinserted_encoded_line(tmp_path: Path) -> None:
     # Given a genuine entry copied and appended a second time — a signature is
     # replayable forever precisely because it is a pure function of its payload
     path = tmp_path / "ledger.jsonl"

@@ -57,7 +57,8 @@ class PayloadHashMismatch(AvowError):
     validly-signed receipt presented a second time is byte-identical to its first
     presentation and verifies exactly as it did then. Naming this error after a property
     the envelope does not have would be a claim it cannot keep. Replay of a *recorded*
-    entry is caught by the ledger chain (``avow.ledger_integrity``), never here."""
+    encoded ledger line copied into another position is caught by the chain
+    (``avow.ledger_integrity``); repeated ``append`` calls need caller-owned state."""
 
     code: ClassVar[str] = "avow.payload_hash_mismatch"
 
