@@ -5,22 +5,29 @@
 Avow signs arbitrary JSON into a portable receipt and verifies it locally against a
 public key you pin. This walkthrough uses a real deployment decision, not a toy string.
 
+Prerequisites: Bash, Python 3.12 or newer, and [`uv`](https://docs.astral.sh/uv/).
+
 ## Run from the source checkout
 
 ```bash
 bash examples/run_evidence_loop.sh
 ```
 
-The script needs Bash, Python 3.12 or newer, and either `uv` in this checkout or an
-installed `avow` command. It creates no database and contacts no service.
+Beside this checkout, the script deliberately chooses its `uv run ... avow` command
+before any installed `avow` on `PATH`; the run therefore tests this source. A copied
+`examples/` directory without the checkout uses an installed `avow` instead. Neither
+path creates a database or contacts a service at runtime.
 
 Expected output:
 
 ```text
+Receipt schema: avow.receipt/v1
 Original receipt: avow.verify.ok
 Altered receipt: avow.payload_hash_mismatch (expected)
 ```
 
+- `Receipt schema: avow.receipt/v1` means signing emitted the exact envelope version
+  that the verifier accepts.
 - `Original receipt: avow.verify.ok` means the payload hash, caller-pinned signer,
   and Ed25519 signature matched.
 - `Altered receipt: avow.payload_hash_mismatch (expected)` means changing the copied
@@ -34,7 +41,8 @@ AVOW_DEMO_DIR="$PWD/demo-output" bash examples/run_evidence_loop.sh
 
 ## Prove the wheel, outside the repository
 
-The project is not published at version `0.5.0.dev0`, so install the wheel you build:
+The checkout is source, not an installed package. Version `0.5.0.dev0` is not
+published, so build and install its wheel to prove the real package artifact:
 
 ```bash
 uv build --wheel

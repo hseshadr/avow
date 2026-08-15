@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
+_EXPECTED_SCHEMA = "avow.receipt/v1"
 _EXPECTED_OUTPUT = (
-    "Original receipt: avow.verify.ok\nAltered receipt: avow.payload_hash_mismatch (expected)\n"
+    "Receipt schema: avow.receipt/v1\n"
+    "Original receipt: avow.verify.ok\n"
+    "Altered receipt: avow.payload_hash_mismatch (expected)\n"
 )
 
 
@@ -79,7 +83,29 @@ def test_should_run_evidence_loop_from_only_examples_and_installed_wheel(tmp_pat
     _assert_example_artifacts(environment / "bin/avow", artifacts)
 
 
+def test_should_prefer_checkout_over_unrelated_avow_on_path(tmp_path: Path) -> None:
+    # Given a hostile avow command earlier on PATH beside the source checkout
+    fake_bin, artifacts = tmp_path / "bin", tmp_path / "artifacts"
+    fake_bin.mkdir()
+    _write_fake_avow(fake_bin / "avow", tmp_path / "fake-used")
+    environment = _example_environment(Path(".venv"), artifacts)
+    environment["PATH"] = f"{fake_bin}:{os.environ['PATH']}"
+    # When the source-checkout example runs
+    result = _run_example(Path("examples"), environment)
+    # Then uv runs this checkout and never invokes the unrelated command
+    assert (result.returncode, result.stdout, result.stderr) == (0, _EXPECTED_OUTPUT, "")
+    assert not (tmp_path / "fake-used").exists()
+
+
+def _write_fake_avow(command: Path, marker: Path) -> None:
+    command.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 99\n", encoding="utf-8")
+    command.chmod(0o755)
+
+
 def _assert_example_artifacts(command: Path, artifacts: Path) -> None:
+    original = json.loads((artifacts / "receipt.json").read_text(encoding="utf-8"))
+    altered = json.loads((artifacts / "altered-receipt.json").read_text(encoding="utf-8"))
+    assert original["schema"] == altered["schema"] == _EXPECTED_SCHEMA
     _assert_verification(command, artifacts, "receipt.json", (0, "avow.verify.ok\n", ""))
     _assert_verification(
         command,

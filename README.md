@@ -9,6 +9,8 @@ Use Avow when a decision or release record must remain portable and independentl
 checkable. It keeps the evidence inside the receipt, binds that evidence to an Ed25519
 key, and needs no service or database to verify it later.
 
+Prerequisites: Bash, Python 3.12 or newer, and [`uv`](https://docs.astral.sh/uv/).
+
 From this checkout, run the complete evidence loop:
 
 ```bash
@@ -18,24 +20,29 @@ bash examples/run_evidence_loop.sh
 Expected output:
 
 ```text
+Receipt schema: avow.receipt/v1
 Original receipt: avow.verify.ok
 Altered receipt: avow.payload_hash_mismatch (expected)
 ```
 
-The first line means the receipt's payload hash, pinned signer, and signature all
-matched. The second line is an expected rejection: the demo changed the deployment
-outcome inside a copy of the receipt, so its stored hash no longer matched its payload.
+The schema line names the exact receipt envelope Avow emitted and verified. The next
+line means the payload hash, pinned signer, and signature all matched. The final line
+is an expected rejection: the demo changed the deployment outcome inside a copy of the
+receipt, so its stored hash no longer matched its payload.
 
 ## Installation
 
-This source checkout is the installable artifact for now:
+This checkout contains the source; it is not a published or installed artifact.
+Prepare its local environment with:
 
 ```bash
 uv sync
 ```
 
-The demo uses `uv run avow` automatically when no installed `avow` command is on the
-path. To prove the packaged path instead, build and install the wheel as shown in the
+Beside this repository's `pyproject.toml`, the demo deliberately selects the checkout's
+`uv run ... avow` path before any installed `avow` on `PATH`, so it exercises this
+source checkout. When only `examples/` is copied away, it uses the installed command
+instead. To prove that packaged path, build and install the wheel as shown in the
 [quickstart](QUICKSTART.md).
 
 ## Architecture

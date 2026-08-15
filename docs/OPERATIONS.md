@@ -81,10 +81,10 @@ Successful commands write one code to standard output:
 
 Expected failures write one stable code to standard error. They do not echo arguments,
 payloads, key bytes, exception messages, tracebacks, or usage text. Parser, validation,
-key, file, canonicalization, signer, signature, payload-hash, ledger configuration,
-lock, size, read, parse, integrity, and head-read failures exit `2`. Recovery-required
-state exits `3`; a failed head installation is deliberately translated to that same
-recovery code because the ledger entry may already be durable.
+key, file, receipt-schema, canonicalization, signer, signature, payload-hash, ledger
+configuration, lock, size, read, parse, integrity, and head-read failures exit `2`.
+Recovery-required state exits `3`; a failed head installation is deliberately
+translated to that same recovery code because the ledger entry may already be durable.
 
 Applications should branch on typed `AvowError.code` values in Python/TypeScript and
 on the stable command code plus exit status at the process boundary. Do not match
@@ -100,6 +100,9 @@ Python and TypeScript share one portable `JsonValue`/I-JSON-compatible domain:
 - finite numbers whose integer-valued members stay within ±(2^53−1);
 - booleans; and
 - `null`.
+
+Every receipt uses the exact envelope schema `avow.receipt/v1`. A missing or unsupported
+schema fails first with `avow.receipt_schema_mismatch`, before payload or signer checks.
 
 Larger exact integers must be strings. NaN, positive/negative infinity, lone surrogate
 code points, non-string keys, functions, symbols, accessors, sparse arrays, cyclic

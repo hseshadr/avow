@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 _README = Path("README.md")
+_TYPESCRIPT_README = Path("ts/README.md")
 _FORBIDDEN_OPENING = ("Assay", "score", "ranking", "recommendation", "AML", "astrology")
 _TREE_LINE = re.compile(
     r"^(src/avow|ts/src)/\s+→\s+(Python wheel|npm tarball):\s+(\S+)/$",
@@ -35,6 +36,13 @@ def _first_runnable_block(markdown: str) -> tuple[str, ...]:
     block = re.search(r"```(?:bash|sh)\n(.*?)```", markdown, re.DOTALL)
     assert block is not None
     return tuple(line for line in block.group(1).splitlines() if line and not line.startswith("#"))
+
+
+def _typescript_usage() -> str:
+    markdown = _TYPESCRIPT_README.read_text(encoding="utf-8")
+    block = re.search(r"```ts\n(.*?)```", markdown, re.DOTALL)
+    assert block is not None
+    return block.group(1)
 
 
 def _local_links(markdown: str) -> tuple[Path, ...]:
@@ -111,6 +119,26 @@ def test_should_put_short_cold_start_after_tldr_and_before_installation() -> Non
     # Then a cold reader starts the bounded evidence loop directly
     assert len(commands) <= 15
     assert commands[0] == "bash examples/run_evidence_loop.sh"
+
+
+def test_should_explain_prerequisites_and_checkout_command_selection() -> None:
+    # Given the cold-reader path before architecture details
+    opening = " ".join(_readme().partition("## Architecture")[0].lower().split())
+    # When prerequisites and command resolution are read
+    assert all(term in opening for term in ("bash", "python 3.12", "`uv`"))
+    # Then it says this checkout wins over an unrelated installed command
+    assert "before any installed `avow`" in opening
+    assert "exercises this source checkout" in opening
+
+
+def test_should_pin_typescript_signer_independently_of_receipt() -> None:
+    # Given the TypeScript README usage example
+    usage = _typescript_usage()
+    # When its trust anchor is inspected
+    assert "publicKeyHex" in usage
+    assert "receipt.public_key" not in usage
+    # Then verification uses an independently named pin
+    assert re.search(r"verifySignature\(receipt,\s*pinnedPublicKey\)", usage)
 
 
 def test_should_keep_opening_free_of_other_domain_language() -> None:

@@ -31,6 +31,20 @@ cp "$SCRIPT_DIR/evidence.json" "$WORK_DIR/evidence.json"
   --key "$WORK_DIR/signing.key" \
   --out "$WORK_DIR/receipt.json" >/dev/null
 
+receipt_schema="$(python3 - "$WORK_DIR/receipt.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get("schema", ""))
+PY
+)"
+if [[ "$receipt_schema" != "avow.receipt/v1" ]]; then
+  echo "Receipt schema was not avow.receipt/v1." >&2
+  exit 1
+fi
+printf 'Receipt schema: %s\n' "$receipt_schema"
+
 original="$("${AVOW[@]}" verify \
   --receipt "$WORK_DIR/receipt.json" \
   --public-key "$WORK_DIR/signing.key.pub")"
