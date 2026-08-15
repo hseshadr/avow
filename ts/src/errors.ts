@@ -68,10 +68,3 @@ export class SignatureBytesInvalid extends SignatureInvalid {}
 export class PayloadHashMismatch extends AvowError {
   public override readonly code = "avow.payload_hash_mismatch";
 }
-
-/**
- * @deprecated Renamed to `PayloadHashMismatch` — it never detected replay. Kept
- * for one minor so `instanceof ReplayMismatch` written against 0.2.x keeps
- * working; its `code` is now `avow.payload_hash_mismatch`. Removed in 0.4.0.
- */
-export const ReplayMismatch = PayloadHashMismatch;

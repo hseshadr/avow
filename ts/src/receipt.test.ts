@@ -21,6 +21,7 @@ interface ReceiptVectors {
   seed_hex: string;
   public_key: string;
   receipts: ReceiptVector[];
+  json_receipts: ReceiptVector[];
 }
 
 const data: ReceiptVectors = JSON.parse(
@@ -29,12 +30,38 @@ const data: ReceiptVectors = JSON.parse(
     "utf8",
   ),
 );
+const receiptVectors = [...data.receipts, ...data.json_receipts];
 
 const WRONG_KEY =
   "0000000000000000000000000000000000000000000000000000000000000000";
 
+function jsonShape(value: JsonValue): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
 describe("Python-signed receipts verify in TypeScript", () => {
-  for (const [i, r] of data.receipts.entries()) {
+  it("contains at least one receipt vector", () => {
+    expect(data.receipts.length).toBeGreaterThan(0);
+    expect(data.json_receipts.length).toBeGreaterThan(0);
+  });
+
+  it("covers every supported top-level JSON shape", () => {
+    const shapes = new Set(
+      receiptVectors.map((receipt) => jsonShape(receipt.payload)),
+    );
+    expect([...shapes].sort()).toEqual([
+      "array",
+      "boolean",
+      "null",
+      "number",
+      "object",
+      "string",
+    ]);
+  });
+
+  for (const [i, r] of receiptVectors.entries()) {
     it(`receipt ${i} verifies under the pinned key`, async () => {
       await expect(
         verifySignature(
@@ -85,7 +112,7 @@ describe("Python-signed receipts verify in TypeScript", () => {
 
 describe("TypeScript signing reproduces Python signatures byte-for-byte", () => {
   it("re-signs each vector with the fixed seed to the identical signature", async () => {
-    for (const r of data.receipts) {
+    for (const r of receiptVectors) {
       const receipt = await signPayload(r.payload, data.seed_hex);
       expect(receipt.signature).toBe(r.signature);
       expect(receipt.payload_hash).toBe(r.payload_hash);
@@ -95,6 +122,40 @@ describe("TypeScript signing reproduces Python signatures byte-for-byte", () => 
 
   it("derives the vector public key from the fixed seed", async () => {
     expect(await publicKeyHex(data.seed_hex)).toBe(data.public_key);
+  });
+});
+
+describe("receipt snapshots", () => {
+  it("detaches nested caller state before the first asynchronous boundary", async () => {
+    const payload = {
+      nested: { value: "before" },
+      tags: ["sealed"],
+    };
+
+    const pending = signPayload(payload, data.seed_hex);
+    payload.nested.value = "after";
+    payload.tags.push("mutated");
+    const receipt = await pending;
+
+    expect(receipt.payload).toEqual({
+      nested: { value: "before" },
+      tags: ["sealed"],
+    });
+    await expect(
+      verifySignature(receipt, receipt.public_key),
+    ).resolves.toBeUndefined();
+  });
+
+  it("translates a failing caller property read to the coded JSON error", async () => {
+    const payload = Object.defineProperty({}, "broken", {
+      enumerable: true,
+      get() {
+        throw new Error("caller data must not escape");
+      },
+    }) as JsonValue;
+    await expect(signPayload(payload, data.seed_hex)).rejects.toMatchObject({
+      code: "avow.canonicalization_failed",
+    });
   });
 });
 

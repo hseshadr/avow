@@ -5,7 +5,7 @@
     "access": "public"
   },
   "type": "module",
-  "description": "Browser-side Avow trust kernel: RFC-8785 canonical bytes + Ed25519 sign/verify, plus recall@k / MRR / confusion-set metrics — all kept identical to the Python avow+assay faces by shared golden vectors.",
+  "description": "Portable RFC 8785 canonicalization and Ed25519 signed receipts for tamper-evident JSON evidence.",
   "keywords": [
     "ed25519",
     "rfc8785",
@@ -19,20 +19,13 @@
     "audit-log",
     "cryptography",
     "browser",
-    "typescript",
-    "metrics",
-    "recall-at-k",
-    "precision-at-k",
-    "mrr",
-    "confusion-matrix",
-    "information-retrieval",
-    "evaluation"
+    "typescript"
   ],
   "license": "MIT",
   "author": "Harish Seshadri",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hseshadr/assay.git",
+    "url": "git+https://github.com/hseshadr/avow.git",
     "directory": "ts"
   },
   "packageManager": "pnpm@11.5.0",
@@ -40,8 +33,7 @@
     "node": ">=22.13"
   },
   "files": [
-    "dist",
-    "benchmarks"
+    "dist"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",

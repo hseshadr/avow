@@ -98,5 +98,23 @@
     "payload": "just a string",
     "canonical_hex": "226a757374206120737472696e6722",
     "content_hash": "sha256:3fe01def54b1c6cd795b2ebfcbab64150f6a507bce043040c662c682eebfed1e"
+  },
+  {
+    "name": "number_top",
+    "payload": 42.5,
+    "canonical_hex": "34322e35",
+    "content_hash": "sha256:7b713affffacc53f6dbd3a5fd52117bc3eb5f3881789d2eb26b5f636daa066df"
+  },
+  {
+    "name": "boolean_top",
+    "payload": true,
+    "canonical_hex": "74727565",
+    "content_hash": "sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+  },
+  {
+    "name": "null_top",
+    "payload": null,
+    "canonical_hex": "6e756c6c",
+    "content_hash": "sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
   }
 ]

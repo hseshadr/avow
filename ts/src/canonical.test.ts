@@ -25,9 +25,27 @@ function toHex(bytes: Uint8Array): string {
   return hex;
 }
 
+function jsonShape(value: JsonValue): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
 describe("RFC-8785 byte identity with the Python rfc8785 kernel", () => {
   it("has the full stress set (floats, unicode, nesting, primitives)", () => {
     expect(vectors.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("covers every supported top-level JSON shape", () => {
+    const shapes = new Set(vectors.map((vector) => jsonShape(vector.payload)));
+    expect([...shapes].sort()).toEqual([
+      "array",
+      "boolean",
+      "null",
+      "number",
+      "object",
+      "string",
+    ]);
   });
 
   for (const v of vectors) {
@@ -53,5 +71,45 @@ describe("canonicalBytes fail-closed", () => {
         "avow.canonicalization_failed",
       );
     }
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects non-finite number %s",
+    (value) => {
+      expect(() => canonicalBytes(value)).toThrow(CanonicalizationFailed);
+    },
+  );
+
+  it("rejects a nested non-finite number", () => {
+    expect(() => canonicalBytes({ nested: [1, Number.NaN] })).toThrow(
+      CanonicalizationFailed,
+    );
+  });
+
+  it("rejects circular JSON instead of recursing forever", () => {
+    const circular: { self?: JsonValue } = {};
+    circular.self = circular;
+    expect(() => canonicalBytes(circular)).toThrow(CanonicalizationFailed);
+  });
+
+  it("rejects non-JSON object instances", () => {
+    const date = new Date("2026-08-15T00:00:00Z") as unknown as JsonValue;
+    expect(() => canonicalBytes(date)).toThrow(CanonicalizationFailed);
+  });
+
+  it("accepts a null-prototype JSON object", () => {
+    const payload = Object.create(null) as Record<string, JsonValue>;
+    payload.answer = 42;
+    expect(toHex(canonicalBytes(payload))).toBe("7b22616e73776572223a34327d");
+  });
+
+  it("wraps property-read failures as a coded canonicalization error", () => {
+    const payload = Object.defineProperty({}, "broken", {
+      enumerable: true,
+      get() {
+        throw new Error("caller data must not escape");
+      },
+    }) as JsonValue;
+    expect(() => canonicalBytes(payload)).toThrow(CanonicalizationFailed);
   });
 });

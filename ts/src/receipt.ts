@@ -14,7 +14,12 @@
  */
 
 import { etc, signAsync, verifyAsync } from "@noble/ed25519";
-import { canonicalBytes, contentHash, type JsonValue } from "./canonical.js";
+import {
+  canonicalBytes,
+  contentHash,
+  type JsonValue,
+  snapshotJsonValue,
+} from "./canonical.js";
 import {
   PayloadHashMismatch,
   SignatureBytesInvalid,
@@ -35,11 +40,12 @@ export async function signPayload<S extends JsonValue>(
   payload: S,
   seedHex: string,
 ): Promise<SignedReceipt<S>> {
-  const message = canonicalBytes(payload);
+  const snapshot = snapshotJsonValue(payload) as S;
+  const message = canonicalBytes(snapshot);
   const signature = await signAsync(message, etc.hexToBytes(seedHex));
   return {
-    payload,
-    payload_hash: await contentHash(payload),
+    payload: snapshot,
+    payload_hash: await contentHash(snapshot),
     public_key: await publicKeyHex(seedHex),
     signature: etc.bytesToHex(signature),
   };

@@ -27,14 +27,66 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+function invalidJson(cause?: unknown): CanonicalizationFailed {
+  return new CanonicalizationFailed(
+    "payload is not a canonicalizable JSON value",
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function snapshotValue(value: JsonValue, ancestors: Set<object>): JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw invalidJson();
+    return value;
+  }
+  if (typeof value !== "object") throw invalidJson();
+  if (ancestors.has(value)) throw invalidJson();
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return Array.from(value, (item) => snapshotValue(item, ancestors));
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null)
+      throw invalidJson();
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        snapshotValue(item, ancestors),
+      ]),
+    );
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+/** Validate and recursively detach one value in the closed JSON data model. */
+export function snapshotJsonValue(payload: JsonValue): JsonValue {
+  try {
+    return snapshotValue(payload, new Set());
+  } catch (cause) {
+    if (cause instanceof CanonicalizationFailed) throw cause;
+    throw invalidJson(cause);
+  }
+}
+
 /** Return the RFC 8785 JCS canonical bytes for `payload`. */
 export function canonicalBytes(payload: JsonValue): Uint8Array {
-  const canonical = canonicalize(payload);
-  if (canonical === undefined) {
-    throw new CanonicalizationFailed(
-      "payload is not a canonicalizable JSON value",
-    );
+  let canonical: string | undefined;
+  try {
+    canonical = canonicalize(snapshotJsonValue(payload));
+  } catch (cause) {
+    if (cause instanceof CanonicalizationFailed) throw cause;
+    throw invalidJson(cause);
   }
+  if (canonical === undefined) throw invalidJson();
   return new TextEncoder().encode(canonical);
 }
 
