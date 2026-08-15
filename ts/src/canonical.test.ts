@@ -75,9 +75,15 @@ describe("canonicalBytes fail-closed", () => {
   it("executes every required shared invalid vector", () => {
     expect(invalidVectors.map((vector) => vector.name).sort()).toEqual([
       "lone_high_surrogate",
+      "lone_high_surrogate_key",
       "lone_low_surrogate",
+      "lone_low_surrogate_key",
+      "nested_lone_high_surrogate_key",
+      "nested_lone_low_surrogate_key",
       "nested_lone_surrogate",
       "unsafe_integer",
+      "unsafe_integer_float",
+      "unsafe_negative_integer",
     ]);
     for (const vector of invalidVectors) {
       expect(
@@ -104,6 +110,27 @@ describe("canonicalBytes fail-closed", () => {
     "rejects non-finite number %s",
     (value) => {
       expect(() => canonicalBytes(value)).toThrow(CanonicalizationFailed);
+    },
+  );
+
+  it.each([
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.MIN_SAFE_INTEGER - 1,
+    1e20,
+    1e21,
+  ])("rejects integer-valued number outside the safe domain: %s", (value) => {
+    expect(() => canonicalBytes(value)).toThrow(CanonicalizationFailed);
+  });
+
+  it.each([
+    [Number.MAX_SAFE_INTEGER, "39303037313939323534373430393931"],
+    [Number.MIN_SAFE_INTEGER, "2d39303037313939323534373430393931"],
+    [0.5, "302e35"],
+    [1e-7, "31652d37"],
+  ] as const)(
+    "accepts safe endpoint or finite non-integer %s",
+    (value, hex) => {
+      expect(toHex(canonicalBytes(value))).toBe(hex);
     },
   );
 

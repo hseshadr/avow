@@ -51,8 +51,7 @@ function hasValidUnicodeScalars(value: string): boolean {
 
 function isSupportedNumber(value: number): boolean {
   if (!Number.isFinite(value)) return false;
-  if (!Number.isInteger(value) || Number.isSafeInteger(value)) return true;
-  return Math.abs(value) >= 1e21;
+  return !Number.isInteger(value) || Number.isSafeInteger(value);
 }
 
 function snapshotArray(
@@ -75,6 +74,7 @@ function snapshotObject(
   const entries: [string, JsonValue][] = [];
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") throw invalidJson();
+    if (!hasValidUnicodeScalars(key)) throw invalidJson();
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor))
       throw invalidJson();

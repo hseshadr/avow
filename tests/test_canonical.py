@@ -32,3 +32,30 @@ def test_should_raise_canonicalization_failed_when_value_is_non_finite() -> None
     # Then a typed CanonicalizationFailed is raised (fail-closed)
     with pytest.raises(CanonicalizationFailed):
         canonical_bytes(payload)
+
+
+@pytest.mark.parametrize("value", [9007199254740992.0, -9007199254740992.0, 1e20])
+def test_should_reject_integer_valued_float_outside_safe_domain(value: float) -> None:
+    # Given an exactly integer-valued float outside JavaScript's safe domain
+    # When canonicalized
+    # Then the cross-language contract fails closed regardless of Python type
+    with pytest.raises(CanonicalizationFailed):
+        canonical_bytes(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (9007199254740991, b"9007199254740991"),
+        (-9007199254740991, b"-9007199254740991"),
+        (0.5, b"0.5"),
+        (1e-7, b"1e-7"),
+    ],
+)
+def test_should_accept_safe_endpoints_fraction_and_exponent(
+    value: int | float, expected: bytes
+) -> None:
+    # Given a safe endpoint or ordinary finite non-integer value
+    # When canonicalized
+    # Then its RFC 8785 bytes are retained
+    assert canonical_bytes(value) == expected

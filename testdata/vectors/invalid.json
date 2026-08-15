@@ -4,6 +4,14 @@
     "payload": 9007199254740992
   },
   {
+    "name": "unsafe_negative_integer",
+    "payload": -9007199254740992
+  },
+  {
+    "name": "unsafe_integer_float",
+    "payload": 1e+20
+  },
+  {
     "name": "lone_high_surrogate",
     "payload": "\ud800"
   },
@@ -15,6 +23,34 @@
     "name": "nested_lone_surrogate",
     "payload": {
       "bad": "\ud800"
+    }
+  },
+  {
+    "name": "lone_high_surrogate_key",
+    "payload": {
+      "\ud800": "bad"
+    }
+  },
+  {
+    "name": "lone_low_surrogate_key",
+    "payload": {
+      "\udc00": "bad"
+    }
+  },
+  {
+    "name": "nested_lone_high_surrogate_key",
+    "payload": {
+      "outer": {
+        "\ud800": "bad"
+      }
+    }
+  },
+  {
+    "name": "nested_lone_low_surrogate_key",
+    "payload": {
+      "outer": {
+        "\udc00": "bad"
+      }
     }
   }
 ]

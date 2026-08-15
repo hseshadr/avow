@@ -7,7 +7,7 @@ Emits three deterministic files replayed byte-for-byte by both the Python kernel
 
 * ``testdata/vectors/canonical.json`` — RFC 8785 canonical bytes + ``sha256:`` hashes
   for a payload set that deliberately stresses the number-serialization hazard
-  (0.5, 0.1, 1e21, -0.0, 1e-7), unicode, key-order, nesting, and primitives.
+  (safe integer endpoints, 0.5, -0.0, 1e-7), unicode, nesting, and primitives.
 * ``testdata/vectors/receipts.json`` — receipts signed with a FIXED, TEST-ONLY seed
   (``b"\\x01" * 32`` — non-secret, published on purpose) so a TS signer with the same
   seed reproduces byte-identical signatures (Ed25519 is deterministic).
@@ -35,9 +35,9 @@ def _float_payload() -> dict[str, JsonValue]:
     return {
         "half": 0.5,
         "tenth": 0.1,
-        "big": 1e21,
         "neg_zero": -0.0,
         "tiny": 1e-7,
+        "fraction_exponent": 1.25e-5,
     }
 
 
@@ -55,6 +55,10 @@ def _canonical_payloads() -> dict[str, JsonValue]:
         "unicode": {"text": "hélloé"},
         "floats": _float_payload(),
         "ints": {"zero": 0, "neg": -42, "big": 1000000},
+        "safe_endpoints": {
+            "positive": 9007199254740991,
+            "negative": -9007199254740991,
+        },
         "nested": _nested_payload(),
         "primitives": {"t": True, "f": False, "n": None},
     }
@@ -104,9 +108,15 @@ def _receipt_vector(subject: JsonValue) -> dict[str, JsonValue]:
 def _invalid_payloads() -> dict[str, JsonValue]:
     return {
         "unsafe_integer": 9007199254740992,
+        "unsafe_negative_integer": -9007199254740992,
+        "unsafe_integer_float": 1e20,
         "lone_high_surrogate": "\ud800",
         "lone_low_surrogate": "\udc00",
         "nested_lone_surrogate": {"bad": "\ud800"},
+        "lone_high_surrogate_key": {"\ud800": "bad"},
+        "lone_low_surrogate_key": {"\udc00": "bad"},
+        "nested_lone_high_surrogate_key": {"outer": {"\ud800": "bad"}},
+        "nested_lone_low_surrogate_key": {"outer": {"\udc00": "bad"}},
     }
 
 
