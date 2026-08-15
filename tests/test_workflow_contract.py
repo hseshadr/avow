@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -95,17 +96,38 @@ def _wrong_node_environment(tmp_path: Path) -> dict[str, str]:
     return dict(os.environ) | {"PATH": f"{tmp_path}:/usr/bin:/bin"}
 
 
-def _build_release_fixture(tmp_path: Path) -> Path:
+def _without_coreutils_environment(tmp_path: Path) -> dict[str, str]:
+    source = _node_environment()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for command in ("corepack", "node", "npm", "uv"):
+        executable = shutil.which(command, path=source["PATH"])
+        assert executable is not None
+        (tools / command).symlink_to(Path(executable).resolve())
+    return source | {"PATH": f"{tools}:/usr/bin:/bin"}
+
+
+def _build_release_fixture(tmp_path: Path, *, environment: dict[str, str] | None = None) -> Path:
     root = tmp_path / "release"
     result = subprocess.run(
         ["bash", "scripts/build_release_artifacts.sh", root],
         check=False,
         capture_output=True,
         text=True,
-        env=_node_environment(),
+        env=environment or _node_environment(),
     )
     assert result.returncode == 0, result.stderr
     return root
+
+
+def _expected_digest_lines(root: Path) -> tuple[str, ...]:
+    paths = sorted(
+        (*root.glob("python/*.whl"), *root.glob("python/*.tar.gz"), *root.glob("npm/*.tgz"))
+    )
+    return tuple(
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}"
+        for path in paths
+    )
 
 
 def test_should_define_all_standalone_workflows_as_valid_mappings() -> None:
@@ -214,6 +236,16 @@ def test_should_explain_node_22_requirement_before_running_release_gate(tmp_path
         "",
         "release candidate requires Node 22; detected v26.5.0\n",
     )
+
+
+def test_should_generate_sorted_digests_without_gnu_coreutils(tmp_path: Path) -> None:
+    # Given a stock-macOS-style PATH with release runtimes but no sha256sum
+    environment = _without_coreutils_environment(tmp_path)
+    # When the real release builder creates all three artifacts
+    artifacts = _build_release_fixture(tmp_path, environment=environment)
+    # Then Python generates a correct deterministic manifest without Coreutils
+    manifest = (artifacts / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+    assert tuple(manifest) == _expected_digest_lines(artifacts)
 
 
 def test_should_scan_full_history_and_audit_locked_dependencies() -> None:

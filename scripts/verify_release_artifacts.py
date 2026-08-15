@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -117,6 +118,22 @@ def _validate_metadata(artifacts: Artifacts) -> tuple[Identity, Identity]:
     return wheel, npm
 
 
+def _artifact_paths(artifacts: Artifacts) -> tuple[Path, ...]:
+    return tuple(sorted((artifacts.wheel, artifacts.sdist, artifacts.npm)))
+
+
+def _digest_lines(root: Path, artifacts: Artifacts) -> tuple[str, ...]:
+    return tuple(
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}"
+        for path in _artifact_paths(artifacts)
+    )
+
+
+def _write_digest_manifest(root: Path, artifacts: Artifacts) -> None:
+    content = "\n".join(_digest_lines(root, artifacts)) + "\n"
+    (root / "SHA256SUMS").write_text(content, encoding="utf-8")
+
+
 def _run(arguments: list[str | Path], *, cwd: Path | None = None) -> None:
     # Arguments are fixed commands plus path values and never enter a shell.
     subprocess.run(arguments, cwd=cwd, check=True, capture_output=True, text=True)  # noqa: S603
@@ -142,12 +159,14 @@ def main() -> int:
     if len(sys.argv) != _ARGUMENT_COUNT:
         sys.stderr.write("usage: verify_release_artifacts.py ARTIFACT_ROOT\n")
         return 1
-    artifacts = _artifacts(Path(sys.argv[1]).resolve())
+    root = Path(sys.argv[1]).resolve()
+    artifacts = _artifacts(root)
     python, npm = _validate_metadata(artifacts)
     with TemporaryDirectory(prefix="avow-release-") as temporary:
         _clean_python_install(artifacts.wheel, Path(temporary))
         _clean_python_install(artifacts.sdist, Path(temporary))
         _clean_npm_install(artifacts.npm, Path(temporary))
+    _write_digest_manifest(root, artifacts)
     sys.stdout.write(
         f"verified release artifacts: {python.name} {python.version} and {npm.name} {npm.version}\n"
     )
