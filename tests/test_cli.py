@@ -71,6 +71,13 @@ _ARTIFACTS = {
 _RUNNER = CliRunner()
 
 
+class _MimicParserFailure(RuntimeError):
+    exit_code = 2
+
+    def format_message(self) -> str:
+        return "not a parser exception"
+
+
 def _run_checked(arguments: list[str]) -> None:
     subprocess.run(arguments, check=True, capture_output=True, text=True)
 
@@ -194,11 +201,11 @@ def test_should_translate_expected_boundary_failures_without_details(
 
 
 def test_should_preserve_unexpected_console_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given an unexpected implementation failure behind the command boundary
-    failure = RuntimeError("implementation defect")
+    # Given an unexpected failure that mimics the parser protocol's attributes
+    failure = _MimicParserFailure("implementation defect")
     monkeypatch.setattr("avow.cli.app", lambda **kwargs: (_ for _ in ()).throw(failure))
     # When the console wrapper encounters that non-parser exception
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(_MimicParserFailure) as caught:
         main()
     # Then it preserves the defect rather than misclassifying it as private input
     assert caught.value is failure

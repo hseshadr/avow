@@ -18,6 +18,7 @@ from avow.ledger import EMPTY_HEAD, save_head
 
 _SENTINEL = "harish.private@example.invalid"
 _TYPER_FLOOR = "typer==0.16.0"
+_TYPER_UPPER = "typer==0.25.1"
 _RUNNER = CliRunner()
 
 
@@ -33,7 +34,13 @@ def floor_avow(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _build_and_install(path, _TYPER_FLOOR)
 
 
-@pytest.fixture(params=("installed_avow", "floor_avow"))
+@pytest.fixture(scope="module")
+def upper_avow(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("typer-upper-installed-avow")
+    return _build_and_install(path, _TYPER_UPPER)
+
+
+@pytest.fixture(params=("installed_avow", "floor_avow", "upper_avow"))
 def supported_avow(request: pytest.FixtureRequest) -> Path:
     return request.getfixturevalue(request.param)
 
