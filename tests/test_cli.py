@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import zipfile
@@ -8,6 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from avow.canonical import JsonValue
 from avow.cli import app
 
 type Command = tuple[tuple[str, ...], str]
@@ -160,7 +162,7 @@ def test_should_ship_only_avow_console_entry_point(tmp_path: Path) -> None:
     # When its console entry-point metadata is inspected
     metadata = _entry_points(wheel)
     # Then Avow owns its command and does not install Assay's command
-    assert metadata == "[console_scripts]\navow = avow.cli:app\n"
+    assert metadata == "[console_scripts]\navow = avow.cli:main\n"
 
 
 def test_should_route_workflow_through_thin_typer_adapter(
@@ -185,3 +187,43 @@ def test_should_translate_expected_boundary_failures_without_details(
     _exercise_boundary_errors()
     # Then domain failures also remain stable codes without exception text
     assert not Path("out").exists()
+
+
+@pytest.mark.parametrize(
+    ("encoded", "expected"),
+    [
+        ('{"shape":"object"}', {"shape": "object"}),
+        ('["array",1]', ["array", 1]),
+        ('"string"', "string"),
+        ("17", 17),
+        ("1.25", 1.25),
+        ("true", True),
+        ("null", None),
+    ],
+)
+def test_should_sign_all_json_shapes_through_installed_command(
+    installed_avow: Path, tmp_path: Path, encoded: str, expected: JsonValue
+) -> None:
+    # Given one complete JSON value at the file boundary
+    (tmp_path / "payload.json").write_text(encoded, encoding="utf-8")
+    # When the clean-installed CLI generates a key and signs it
+    _assert_success(_run(installed_avow, tmp_path, "keygen", "--out", "key"), "avow.keygen.ok")
+    result = _run_sign_command(installed_avow, tmp_path)
+    # Then its exact JSON shape survives the signed receipt
+    _assert_success(result, "avow.sign.ok")
+    receipt = json.loads((tmp_path / "receipt.json").read_text(encoding="utf-8"))
+    assert receipt["payload"] == expected
+
+
+def _run_sign_command(command: Path, directory: Path) -> subprocess.CompletedProcess[str]:
+    return _run(
+        command,
+        directory,
+        "sign",
+        "--payload",
+        "payload.json",
+        "--key",
+        "key",
+        "--out",
+        "receipt.json",
+    )

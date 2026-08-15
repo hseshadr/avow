@@ -15,23 +15,25 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
-from typing import cast, overload
+from typing import overload
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from avow.canonical import JsonValue, canonical_bytes, content_hash
 from avow.errors import (
     PayloadHashMismatch,
     SignatureBytesInvalid,
     SignerMismatch,
+    SubjectInvalid,
     SubjectNotFrozen,
 )
 
 
-type Subject = BaseModel | dict[str, JsonValue]
-type SubjectInput = BaseModel | Mapping[str, JsonValue]
+type Subject = BaseModel | JsonValue
+type SubjectInput = BaseModel | JsonValue | Mapping[str, JsonValue]
+_JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 class SignedReceipt[SubjectT: Subject](BaseModel):
@@ -54,12 +56,22 @@ def _require_frozen(payload: BaseModel) -> None:
         raise SubjectNotFrozen("Pydantic subjects must set model_config frozen=True")
 
 
+def _validated_json(payload: object) -> JsonValue:
+    """Validate and detach one value in the closed JSON data model."""
+    candidate = dict(payload) if isinstance(payload, Mapping) else payload
+    try:
+        validated = _JSON_ADAPTER.validate_python(candidate, strict=True)
+    except ValidationError as exc:
+        raise SubjectInvalid("subject must contain only JSON-compatible values") from exc
+    return copy.deepcopy(validated)
+
+
 def _subject_json(payload: SubjectInput) -> JsonValue:
     """Convert either supported subject boundary to canonicalizable JSON."""
     if isinstance(payload, BaseModel):
         _require_frozen(payload)
-        return cast(JsonValue, payload.model_dump(mode="json"))
-    return dict(payload)
+        return _validated_json(payload.model_dump(mode="json"))
+    return _validated_json(payload)
 
 
 def _snapshot_subject(payload: SubjectInput) -> tuple[Subject, JsonValue]:
@@ -67,10 +79,10 @@ def _snapshot_subject(payload: SubjectInput) -> tuple[Subject, JsonValue]:
     if isinstance(payload, BaseModel):
         _require_frozen(payload)
         stored_model = payload.model_copy(deep=True)
-        snapshot = cast(JsonValue, stored_model.model_dump(mode="json"))
+        snapshot = _validated_json(stored_model.model_dump(mode="json"))
         return stored_model, snapshot
-    stored_mapping = copy.deepcopy(dict(payload))
-    return stored_mapping, stored_mapping
+    snapshot = _validated_json(payload)
+    return snapshot, snapshot
 
 
 def payload_digest(payload: SubjectInput) -> str:
@@ -100,8 +112,8 @@ def sign_payload[SubjectT: BaseModel](
 
 @overload
 def sign_payload(
-    payload: Mapping[str, JsonValue], signing_key: SigningKey
-) -> SignedReceipt[dict[str, JsonValue]]: ...
+    payload: JsonValue | Mapping[str, JsonValue], signing_key: SigningKey
+) -> SignedReceipt[JsonValue]: ...
 
 
 def sign_payload(  # type: ignore[misc]  # overloaded generic receipt is invariant

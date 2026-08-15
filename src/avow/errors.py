@@ -26,6 +26,12 @@ class SubjectNotFrozen(AvowError):
     code: ClassVar[str] = "avow.subject_not_frozen"
 
 
+class SubjectInvalid(AvowError):
+    """A subject contains a value outside the JSON data model."""
+
+    code: ClassVar[str] = "avow.subject_invalid"
+
+
 class SignatureInvalid(AvowError):
     """A receipt failed to verify under the pinned signer.
 

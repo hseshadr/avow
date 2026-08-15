@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-avow = "avow.cli:app"
+avow = "avow.cli:main"
 
 [dependency-groups]
 dev = [

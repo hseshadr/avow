@@ -28,12 +28,22 @@ from avow.errors import (
     SignatureBytesInvalid,
     SignatureInvalid,
     SignerMismatch,
+    SubjectInvalid,
     SubjectNotFrozen,
 )
 from avow.verify import verify_receipt
 
 _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
+_JSON_SUBJECTS: tuple[JsonValue, ...] = (
+    {"kind": "object"},
+    ["array", {"nested": True}],
+    "string",
+    17,
+    1.25,
+    True,
+    None,
+)
 _PUBLIC_FUNCTIONS = frozenset(
     {
         "append",
@@ -57,6 +67,7 @@ _PUBLIC_FUNCTIONS = frozenset(
 )
 _AVOW_CODES: tuple[tuple[type[AvowError], str], ...] = (
     (CanonicalizationFailed, "avow.canonicalization_failed"),
+    (SubjectInvalid, "avow.subject_invalid"),
     (SubjectNotFrozen, "avow.subject_not_frozen"),
     (SignatureInvalid, "avow.signature_invalid"),
     (SignerMismatch, "avow.signer_mismatch"),
@@ -218,6 +229,43 @@ def test_should_sign_and_verify_an_unrelated_subject_with_the_same_envelope() ->
     assert verify_signature(receipt, expected_public_key=_EXPECTED) is None
     with pytest.raises(SignatureInvalid):
         verify_signature(receipt, expected_public_key="ab" * 32)
+
+
+@pytest.mark.parametrize("subject", _JSON_SUBJECTS)
+def test_should_sign_every_top_level_json_shape(subject: JsonValue) -> None:
+    # Given any valid top-level JSON value
+    # When it is signed repeatedly through the generic envelope
+    first = sign_payload(subject, SigningKey(_SEED))
+    second = sign_payload(subject, SigningKey(_SEED))
+    # Then its snapshot is stable and self-verifies under the pinned signer
+    assert first == second
+    assert first.payload == subject
+    assert verify_receipt(first, expected_public_key=_EXPECTED) is None
+
+
+def test_should_detach_nested_list_and_map_state_before_signing() -> None:
+    # Given mutable nested list and map state under a top-level array
+    nested: dict[str, JsonValue] = {"value": "before"}
+    values: list[JsonValue] = [nested]
+    subject: list[JsonValue] = [{"items": values}]
+    # When the subject is signed and the caller later mutates both containers
+    receipt = sign_payload(subject, SigningKey(_SEED))
+    nested["value"] = "after"
+    values.append("late")
+    # Then the signed snapshot remains detached and verifiable
+    assert receipt.payload == [{"items": [{"value": "before"}]}]
+    assert verify_receipt(receipt, expected_public_key=_EXPECTED) is None
+
+
+@pytest.mark.parametrize("subject", [{"nested": object()}, {"not", "json"}])
+def test_should_reject_non_json_python_values_with_typed_code(subject: object) -> None:
+    # Given a Python value outside the JSON data model
+    # When signing validates the generic subject boundary
+    with pytest.raises(AvowError) as caught:
+        sign_payload(subject, SigningKey(_SEED))  # type: ignore[arg-type]
+    # Then callers receive a stable typed failure rather than a raw library error
+    assert type(caught.value).__name__ == "SubjectInvalid"
+    assert caught.value.code == "avow.subject_invalid"
 
 
 def test_should_seal_opaque_subjects_without_domain_specific_adapters() -> None:

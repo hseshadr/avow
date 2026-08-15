@@ -8,8 +8,15 @@ from pathlib import Path
 
 import pytest
 from test_cli import _build_and_install
+from typer.testing import CliRunner
+
+import avow.ledger as ledger_module
+from avow.cli import app
+from avow.errors import LedgerHeadWriteFailed
+from avow.ledger import EMPTY_HEAD, save_head
 
 _SENTINEL = "harish.private@example.invalid"
+_RUNNER = CliRunner()
 
 
 @pytest.fixture(scope="module")
@@ -31,6 +38,57 @@ def _assert_error(result: subprocess.CompletedProcess[str], code: str) -> None:
     assert (result.returncode, result.stdout, result.stderr) == (2, "", f"{code}\n")
     assert _SENTINEL not in result.stdout + result.stderr
     assert "Traceback" not in result.stderr
+
+
+def _raise_head_write_failure(*args: object, **kwargs: object) -> None:
+    raise LedgerHeadWriteFailed(_SENTINEL)
+
+
+def _assert_recovery(result: object) -> None:
+    assert result.exit_code == 3
+    assert result.stdout == ""
+    assert result.stderr == "avow.ledger_recovery_required\n"
+
+
+def _assert_process_recovery(result: subprocess.CompletedProcess[str]) -> None:
+    assert (result.returncode, result.stdout, result.stderr) == (
+        3,
+        "",
+        "avow.ledger_recovery_required\n",
+    )
+
+
+def _prepare_old_head(path: Path, exists: bool) -> bytes | None:
+    if exists:
+        save_head(EMPTY_HEAD, path=path)
+    return path.read_bytes() if path.exists() else None
+
+
+def _invoke_failed_head_install(monkeypatch: pytest.MonkeyPatch) -> tuple[object, bytes]:
+    original = ledger_module.save_head
+    monkeypatch.setattr(ledger_module, "save_head", _raise_head_write_failure)
+    result = _RUNNER.invoke(app, list(_run_append_args("receipt.json")))
+    monkeypatch.setattr(ledger_module, "save_head", original)
+    return result, Path("evidence.jsonl").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("keygen", f"--{_SENTINEL}"),
+        (_SENTINEL,),
+        ("sign", "--payload", _SENTINEL, "--key"),
+    ],
+)
+def test_should_redact_parser_failures_from_installed_command(
+    installed_avow: Path, tmp_path: Path, arguments: tuple[str, ...]
+) -> None:
+    # Given a malformed command line carrying a private sentinel
+    # When the clean-installed console script parses it
+    result = _run(installed_avow, tmp_path, *arguments)
+    # Then only one stable code is rendered, without usage or private arguments
+    _assert_error(result, "avow.command.invalid")
+    assert "Usage" not in result.stderr
 
 
 def _keygen(command: Path, directory: Path) -> None:
@@ -253,7 +311,7 @@ def test_should_not_append_when_saved_head_is_stale(installed_avow: Path, tmp_pa
     # When another CLI append attempts to absorb the unacknowledged tail
     result = _run_append(installed_avow, tmp_path, "receipt.json")
     # Then recovery is required and the legacy ledger bytes are untouched
-    _assert_error(result, "avow.ledger_recovery_required")
+    _assert_process_recovery(result)
     assert (tmp_path / "evidence.jsonl").read_bytes() == before
 
 
@@ -270,3 +328,39 @@ def test_should_honour_legacy_ledger_file_lock(installed_avow: Path, tmp_path: P
     # Then it times out with a stable code and changes no history
     _assert_error(result, "avow.ledger_lock_timeout")
     assert ledger.read_bytes() == before
+
+
+@pytest.mark.parametrize("existing_head", [False, True])
+def test_should_surface_recovery_after_durable_append_when_head_write_fails(
+    installed_avow: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    existing_head: bool,
+) -> None:
+    # Given valid evidence and a missing or empty old pin
+    _signed_evidence(installed_avow, tmp_path)
+    head = tmp_path / "evidence.head"
+    old_head = _prepare_old_head(head, existing_head)
+    monkeypatch.chdir(tmp_path)
+    # When the real append commits but head installation fails
+    first, advanced = _invoke_failed_head_install(monkeypatch)
+    ledger = Path("evidence.jsonl")
+    second = _RUNNER.invoke(app, list(_run_append_args("receipt.json")))
+    # Then both calls require recovery and the second preserves the durable history
+    _assert_recovery(first)
+    _assert_recovery(second)
+    assert advanced and ledger.read_bytes() == advanced
+    assert (head.read_bytes() if head.exists() else None) == old_head
+
+
+def _run_append_args(receipt: str) -> tuple[str, ...]:
+    return (
+        "ledger",
+        "append",
+        "--receipt",
+        receipt,
+        "--ledger",
+        "evidence.jsonl",
+        "--head",
+        "evidence.head",
+    )
