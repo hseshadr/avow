@@ -186,6 +186,17 @@ def test_should_state_both_unpublished_candidate_versions_without_registry_drift
     assert "not published" in typescript
 
 
+def test_should_keep_release_tooling_out_of_end_user_first_run() -> None:
+    # Given the end-user cold start and the later maintainer-only release section
+    markdown = _readme()
+    first_run = "\n".join(_first_runnable_block(markdown))
+    release = markdown.partition("## Maintainer release gate")[2]
+    # Then users still get one simple demo while maintainers get exact tool prerequisites
+    assert first_run == "bash examples/run_evidence_loop.sh"
+    assert all(item in release for item in ("Node 22", "Corepack", "pnpm 11.5.0"))
+    assert "uv run poe release-candidate" in release
+
+
 def test_should_resolve_every_readme_local_link() -> None:
     # Given every local destination exposed by the README
     links = _local_links(_readme())

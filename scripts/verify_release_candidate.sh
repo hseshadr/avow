@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-test "$(node -p 'process.versions.node.split(".")[0]')" = "22"
+detected_node="$(node --version 2>/dev/null || true)"
+node_major="${detected_node#v}"
+node_major="${node_major%%.*}"
+if [[ "${node_major}" != "22" ]]; then
+  printf 'release candidate requires Node 22; detected %s\n' "${detected_node:-unavailable}" >&2
+  exit 1
+fi
 uv sync --frozen --all-groups
 corepack pnpm --dir ts install --frozen-lockfile --ignore-scripts
 

@@ -88,6 +88,13 @@ def _node_environment() -> dict[str, str]:
     return dict(os.environ) | {"PATH": f"{selected}:{os.environ['PATH']}"}
 
 
+def _wrong_node_environment(tmp_path: Path) -> dict[str, str]:
+    binary = tmp_path / "node"
+    binary.write_text('#!/bin/sh\necho "v26.5.0"\n', encoding="utf-8")
+    binary.chmod(0o755)
+    return dict(os.environ) | {"PATH": f"{tmp_path}:/usr/bin:/bin"}
+
+
 def _build_release_fixture(tmp_path: Path) -> Path:
     root = tmp_path / "release"
     result = subprocess.run(
@@ -187,6 +194,25 @@ def test_should_verify_real_release_artifacts_through_clean_installs(tmp_path: P
     assert result.returncode == 0, result.stderr
     assert result.stdout == (
         "verified release artifacts: avow 0.5.0.dev0 and @edgeproc/avow 0.5.0-dev.0\n"
+    )
+
+
+def test_should_explain_node_22_requirement_before_running_release_gate(tmp_path: Path) -> None:
+    # Given a maintainer shell whose active Node is not the release runtime
+    environment = _wrong_node_environment(tmp_path)
+    # When the local release candidate starts
+    result = subprocess.run(
+        ["bash", "scripts/verify_release_candidate.sh"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    # Then it stops before installation with one stable actionable message
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1,
+        "",
+        "release candidate requires Node 22; detected v26.5.0\n",
     )
 
 

@@ -110,3 +110,18 @@ untouched. No command in this README publishes, tags, or changes either registry
   local-only behavior, limits, and key handling.
 - [TypeScript package](ts/README.md): browser/runtime receipt API.
 - [Provenance](PROVENANCE.md): repository and release identity.
+
+## Maintainer release gate
+
+The end-user demo above needs only Bash, Python 3.12 or newer, and `uv`. Contributors
+running the complete release gate additionally need Node 22, Corepack, pnpm 11.5.0,
+actionlint, gitleaks, and ShellCheck. Corepack selects the pinned pnpm version from
+`ts/package.json`.
+
+```bash
+node --version
+corepack pnpm --version
+uv run poe release-candidate
+```
+
+The gate rejects any active Node major other than 22 before installing dependencies.
