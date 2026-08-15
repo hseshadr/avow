@@ -21,6 +21,8 @@ const PUBLIC_EXPORTS = [
   "CanonicalizationFailed",
   "JsonValue",
   "PayloadHashMismatch",
+  "RECEIPT_SCHEMA",
+  "ReceiptSchemaMismatch",
   "SignatureBytesInvalid",
   "SignatureInvalid",
   "SignedReceipt",

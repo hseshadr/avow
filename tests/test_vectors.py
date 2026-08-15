@@ -69,7 +69,9 @@ def test_should_replay_every_canonical_shape() -> None:
 
 
 def _assert_receipt_vector(r: dict[str, JsonValue], data: dict[str, JsonValue]) -> None:
+    assert r["schema"] == "avow.receipt/v1"
     receipt = SignedReceipt[JsonValue](
+        schema=str(r["schema"]),
         payload=r["payload"],
         payload_hash=str(r["payload_hash"]),
         public_key=str(data["public_key"]),
@@ -77,6 +79,7 @@ def _assert_receipt_vector(r: dict[str, JsonValue], data: dict[str, JsonValue]) 
     )
     verify_signature(receipt, expected_public_key=str(data["public_key"]))
     regenerated = sign_payload(r["payload"], SigningKey(bytes.fromhex(str(data["seed_hex"]))))
+    assert regenerated.receipt_schema == r["schema"]
     assert regenerated.payload_hash == r["payload_hash"]
     assert regenerated.public_key == data["public_key"]
     assert regenerated.signature == r["signature"]

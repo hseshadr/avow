@@ -68,3 +68,8 @@ export class SignatureBytesInvalid extends SignatureInvalid {}
 export class PayloadHashMismatch extends AvowError {
   public override readonly code = "avow.payload_hash_mismatch";
 }
+
+/** A receipt does not declare the exact schema supported by this runtime. */
+export class ReceiptSchemaMismatch extends AvowError {
+  public override readonly code = "avow.receipt_schema_mismatch";
+}

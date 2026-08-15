@@ -134,6 +134,25 @@ def _invoke_workflow() -> None:
         assert (result.exit_code, result.stdout, result.stderr) == (0, f"{code}\n", "")
 
 
+def _create_receipt() -> dict[str, JsonValue]:
+    Path("evidence.json").write_text('{"kind":"policy"}\n', encoding="utf-8")
+    for arguments, code in _WORKFLOW[:2]:
+        result = _RUNNER.invoke(app, list(arguments))
+        assert (result.exit_code, result.stdout, result.stderr) == (0, f"{code}\n", "")
+    return json.loads(Path("receipt.json").read_text(encoding="utf-8"))
+
+
+def _write_schema_mutation(
+    receipt: dict[str, JsonValue], schema: str | None
+) -> tuple[JsonValue, ...]:
+    signed = tuple(receipt[field] for field in ("payload", "payload_hash", "signature"))
+    receipt.pop("schema", None)
+    if schema is not None:
+        receipt["schema"] = schema
+    Path("receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    return signed
+
+
 def _assert_invocation_error(arguments: list[str], code: str) -> None:
     result = _RUNNER.invoke(app, arguments)
     assert (result.exit_code, result.stdout, result.stderr) == (2, "", f"{code}\n")
@@ -188,6 +207,22 @@ def test_should_route_workflow_through_thin_typer_adapter(
     assert {path.name for path in tmp_path.iterdir()} == _ARTIFACTS
 
 
+@pytest.mark.parametrize("schema", [None, "avow.receipt/v0", ""])
+def test_should_reject_missing_or_wrong_receipt_schema_with_typed_cli_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, schema: str | None
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    receipt = _create_receipt()
+    signed_fields = _write_schema_mutation(receipt, schema)
+    _assert_invocation_error(
+        ["verify", "--receipt", "receipt.json", "--public-key", "signing.key.pub"],
+        "avow.receipt_schema_mismatch",
+    )
+    assert tuple(receipt[field] for field in ("payload", "payload_hash", "signature")) == (
+        signed_fields
+    )
+
+
 def test_should_translate_expected_boundary_failures_without_details(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -234,6 +269,7 @@ def test_should_sign_all_json_shapes_through_installed_command(
     # Then its exact JSON shape survives the signed receipt
     _assert_success(result, "avow.sign.ok")
     receipt = json.loads((tmp_path / "receipt.json").read_text(encoding="utf-8"))
+    assert receipt["schema"] == "avow.receipt/v1"
     assert receipt["payload"] == expected
 
 

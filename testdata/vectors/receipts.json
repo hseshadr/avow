@@ -3,6 +3,7 @@
   "public_key": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
   "receipts": [
     {
+      "schema": "avow.receipt/v1",
       "payload": {
         "kind": "score",
         "score": 0.5,
@@ -15,6 +16,7 @@
       "signature": "85dd359688d7242019d5060a64a0faf15245387f242b7a881b76de74e7f39519f71cb23087de8fa838c0f4f3fa6c58371fc59f19ea3528c87eb326720da95b08"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": {
         "kind": "effect",
         "score": 0.1,
@@ -24,6 +26,7 @@
       "signature": "2ade7d58d0a33b8df4839f934ca70c27aa0c5c1af38c47d7f0123578bb995845e4acd6c430dcf8aeadb0d7b8eee0a345ec9bfdf32863cdfee96ec565b19ac70a"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": {
         "kind": "edge",
         "score": 1e-07,
@@ -35,6 +38,7 @@
       "signature": "7954b427ccf3841b89b6c26da2ad1281537a69d690d6457f85e747cf64ce99ea78b38ab5852ce39e5d3693ab65c251b3d73d978808b1e769a02db95667708c00"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": [
         1,
         "two",
@@ -44,21 +48,25 @@
       "signature": "a98ea316f73a6d970e72cb895b6282ce02519af337224e08bad15135aaec97c53b9d10f6b0d87361b6d110a9bf0d99d0032f014401c380086e7b186d315af703"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": "sealed evidence",
       "payload_hash": "sha256:d80f03f6f50391456c06a4fedde2ec6cd7c38d1aa9075977be269c2360ee30d4",
       "signature": "78e76082c639bad02ca64387890c291cfc7eeb03c0b8bba139c308ee0c7dfc9fdfd97ba98eb77ccbb25f380020c20432363b6bfaa84f122dc2d873157e8a9400"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": 42.5,
       "payload_hash": "sha256:7b713affffacc53f6dbd3a5fd52117bc3eb5f3881789d2eb26b5f636daa066df",
       "signature": "636ed8ed8cfee310570d527314b3e35a265092ccd54b408cc72623670890930f3cc59f222ed2d28292acb6a37e876a900aa07a0cc387e8cca93c4f4af6bbe60a"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": true,
       "payload_hash": "sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
       "signature": "f71b0e0e8ab82891d7af39c2838a203000a1367b6e583a002a8c4069bc70ff4059bb7dd5332584f56e4b215acb5946fa3610113f1e1f09943d899ea97c30000a"
     },
     {
+      "schema": "avow.receipt/v1",
       "payload": null,
       "payload_hash": "sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
       "signature": "0fb3736fdfc84d6392ee057e89a08d0e82f015a0941a0b01dc2093b2e8e7e9b5630cb1b9141c349a2d8cceb47b276ab23e6fc18d32f4d6c9513a8e8b549e5000"

@@ -5,12 +5,14 @@ export {
   AvowError,
   CanonicalizationFailed,
   PayloadHashMismatch,
+  ReceiptSchemaMismatch,
   SignatureBytesInvalid,
   SignatureInvalid,
   SignerMismatch,
 } from "./errors.js";
 export { generateSeedHex, publicKeyHex } from "./keys.js";
 export {
+  RECEIPT_SCHEMA,
   type SignedReceipt,
   signPayload,
   verifySignature,

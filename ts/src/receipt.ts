@@ -22,13 +22,18 @@ import {
 } from "./canonical.js";
 import {
   PayloadHashMismatch,
+  ReceiptSchemaMismatch,
   SignatureBytesInvalid,
   SignerMismatch,
 } from "./errors.js";
 import { publicKeyHex } from "./keys.js";
 
+/** The only receipt envelope schema accepted and emitted by this runtime. */
+export const RECEIPT_SCHEMA = "avow.receipt/v1" as const;
+
 /** A signed subject: the subject plus its content-hash, public key and signature. */
 export interface SignedReceipt<S extends JsonValue> {
+  schema: typeof RECEIPT_SCHEMA;
   payload: S;
   payload_hash: string;
   public_key: string;
@@ -44,6 +49,7 @@ export async function signPayload<S extends JsonValue>(
   const message = canonicalBytes(snapshot);
   const signature = await signAsync(message, etc.hexToBytes(seedHex));
   return {
+    schema: RECEIPT_SCHEMA,
     payload: snapshot,
     payload_hash: await contentHash(snapshot),
     public_key: await publicKeyHex(seedHex),
@@ -98,6 +104,9 @@ export async function verifySignature<S extends JsonValue>(
   receipt: SignedReceipt<S>,
   expectedPublicKey: string,
 ): Promise<void> {
+  if (receipt.schema !== RECEIPT_SCHEMA) {
+    throw new ReceiptSchemaMismatch("receipt schema is missing or unsupported");
+  }
   const snapshot = snapshotJsonValue(receipt.payload);
   if ((await contentHash(snapshot)) !== receipt.payload_hash) {
     throw new PayloadHashMismatch(

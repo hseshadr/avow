@@ -75,6 +75,12 @@ class PayloadHashMismatch(AvowError):
     code: ClassVar[str] = "avow.payload_hash_mismatch"
 
 
+class ReceiptSchemaMismatch(AvowError):
+    """A receipt does not declare the exact schema supported by this runtime."""
+
+    code: ClassVar[str] = "avow.receipt_schema_mismatch"
+
+
 # Deprecated alias, kept for one minor so `except ReplayMismatch:` written against 0.2.x
 # keeps working. The `code` it carries is now `avow.payload_hash_mismatch`; a caller that
 # branches on the old string must be updated. Removed in 0.4.0.

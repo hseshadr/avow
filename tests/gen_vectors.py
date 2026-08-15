@@ -99,6 +99,7 @@ def _receipt_vector(subject: JsonValue) -> dict[str, JsonValue]:
     key = SigningKey(_TEST_SEED)
     receipt = sign_payload(subject, key)
     return {
+        "schema": receipt.receipt_schema,
         "payload": receipt.payload,
         "payload_hash": receipt.payload_hash,
         "signature": receipt.signature,

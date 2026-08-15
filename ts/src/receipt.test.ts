@@ -4,14 +4,21 @@ import type { JsonValue } from "./canonical.js";
 import {
   type AvowError,
   PayloadHashMismatch,
+  ReceiptSchemaMismatch,
   SignatureBytesInvalid,
   SignatureInvalid,
   SignerMismatch,
 } from "./errors.js";
 import { generateSeedHex, publicKeyHex } from "./keys.js";
-import { signPayload, verifySignature } from "./receipt.js";
+import {
+  RECEIPT_SCHEMA,
+  type SignedReceipt,
+  signPayload,
+  verifySignature,
+} from "./receipt.js";
 
 interface ReceiptVector {
+  schema: "avow.receipt/v1";
   payload: JsonValue;
   payload_hash: string;
   signature: string;
@@ -64,6 +71,7 @@ describe("Python-signed receipts verify in TypeScript", () => {
       await expect(
         verifySignature(
           {
+            schema: r.schema,
             payload: r.payload,
             payload_hash: r.payload_hash,
             public_key: data.public_key,
@@ -78,6 +86,7 @@ describe("Python-signed receipts verify in TypeScript", () => {
       await expect(
         verifySignature(
           {
+            schema: r.schema,
             payload: r.payload,
             payload_hash: r.payload_hash,
             public_key: data.public_key,
@@ -96,6 +105,7 @@ describe("Python-signed receipts verify in TypeScript", () => {
       await expect(
         verifySignature(
           {
+            schema: r.schema,
             payload: tampered,
             payload_hash: r.payload_hash,
             public_key: data.public_key,
@@ -112,6 +122,7 @@ describe("TypeScript signing reproduces Python signatures byte-for-byte", () => 
   it("re-signs each vector with the fixed seed to the identical signature", async () => {
     for (const r of receiptVectors) {
       const receipt = await signPayload(r.payload, data.seed_hex);
+      expect(receipt.schema).toBe(r.schema);
       expect(receipt.signature).toBe(r.signature);
       expect(receipt.payload_hash).toBe(r.payload_hash);
       expect(receipt.public_key).toBe(data.public_key);
@@ -158,6 +169,30 @@ describe("receipt snapshots", () => {
 });
 
 describe("verification snapshots", () => {
+  it.each([undefined, "", "avow.receipt/v0"])(
+    "rejects a receipt whose schema is %s while signed fields remain unchanged",
+    async (schema) => {
+      const receipt = await signPayload({ state: "sealed" }, data.seed_hex);
+      const forged = { ...receipt, schema } as unknown as SignedReceipt<
+        typeof receipt.payload
+      >;
+
+      await expect(
+        verifySignature(forged, receipt.public_key),
+      ).rejects.toMatchObject({ code: "avow.receipt_schema_mismatch" });
+      await expect(verifySignature(forged, receipt.public_key)).rejects.toThrow(
+        ReceiptSchemaMismatch,
+      );
+    },
+  );
+
+  it("exports the exact versioned receipt schema", async () => {
+    const receipt = await signPayload({ state: "sealed" }, data.seed_hex);
+
+    expect(RECEIPT_SCHEMA).toBe("avow.receipt/v1");
+    expect(receipt.schema).toBe(RECEIPT_SCHEMA);
+  });
+
   it("rejects a payload changed between hash and signature verification", async () => {
     const seed = data.seed_hex;
     const before = { state: "before" };

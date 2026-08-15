@@ -15,15 +15,16 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping
-from typing import overload
+from typing import Final, Literal, overload
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from avow.canonical import JsonValue, canonical_bytes, content_hash
 from avow.errors import (
     PayloadHashMismatch,
+    ReceiptSchemaMismatch,
     SignatureBytesInvalid,
     SignerMismatch,
     SubjectInvalid,
@@ -34,6 +35,8 @@ from avow.errors import (
 type Subject = BaseModel | JsonValue
 type SubjectInput = BaseModel | JsonValue | Mapping[str, JsonValue]
 _JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+RECEIPT_SCHEMA: Final = "avow.receipt/v1"
+_SIGNED_FIELDS: Final = frozenset({"payload", "payload_hash", "public_key", "signature"})
 
 
 class SignedReceipt[SubjectT: Subject](BaseModel):
@@ -42,12 +45,23 @@ class SignedReceipt[SubjectT: Subject](BaseModel):
     The envelope is generic over ``SubjectT`` and never inspects subject fields. It
     signs canonical JSON, so unrelated applications share the same receipt contract."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", serialize_by_alias=True)
 
+    receipt_schema: Literal["avow.receipt/v1"] = Field(alias="schema")
     payload: SubjectT
     payload_hash: str
     public_key: str
     signature: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_supported_schema(cls, value: object) -> object:
+        """Reject legacy or unknown envelopes before validating signed fields."""
+        if not isinstance(value, Mapping):
+            return value
+        if value.keys() >= _SIGNED_FIELDS and value.get("schema") != RECEIPT_SCHEMA:
+            raise ReceiptSchemaMismatch("receipt schema is missing or unsupported")
+        return value
 
 
 def _require_frozen(payload: BaseModel) -> None:
@@ -97,6 +111,7 @@ def _seal_snapshot(
     message = canonical_bytes(snapshot)
     signature = signing_key.sign(message).signature
     return SignedReceipt(
+        schema=RECEIPT_SCHEMA,
         payload=payload,
         payload_hash=content_hash(snapshot),
         public_key=bytes(signing_key.verify_key).hex(),
@@ -129,6 +144,11 @@ def _check_hash[SubjectT: Subject](receipt: SignedReceipt[SubjectT]) -> None:
         raise PayloadHashMismatch("payload hash does not match payload content")
 
 
+def _require_receipt_schema(receipt: object) -> None:
+    if getattr(receipt, "receipt_schema", None) != RECEIPT_SCHEMA:
+        raise ReceiptSchemaMismatch("receipt schema is missing or unsupported")
+
+
 def _require_signer[SubjectT: Subject](
     receipt: SignedReceipt[SubjectT], expected_public_key: str
 ) -> None:
@@ -153,6 +173,7 @@ def verify_signature[SubjectT: Subject](
 
     The receipt's embedded key is not trusted. Replay defence requires external state;
     see ``docs/OPERATIONS.md`` for the complete boundary."""
+    _require_receipt_schema(receipt)
     _check_hash(receipt)
     _require_signer(receipt, expected_public_key)
     message = canonical_bytes(_subject_json(receipt.payload))

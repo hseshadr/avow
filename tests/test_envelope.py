@@ -25,6 +25,7 @@ from avow.errors import (
     LedgerRecoveryRequired,
     LedgerUnreadable,
     PayloadHashMismatch,
+    ReceiptSchemaMismatch,
     SignatureBytesInvalid,
     SignatureInvalid,
     SignerMismatch,
@@ -73,6 +74,7 @@ _AVOW_CODES: tuple[tuple[type[AvowError], str], ...] = (
     (SignerMismatch, "avow.signer_mismatch"),
     (SignatureBytesInvalid, "avow.signature_invalid"),
     (PayloadHashMismatch, "avow.payload_hash_mismatch"),
+    (ReceiptSchemaMismatch, "avow.receipt_schema_mismatch"),
     (LedgerIntegrityError, "avow.ledger_integrity"),
     (LedgerUnreadable, "avow.ledger_unreadable"),
     (LedgerEntryMalformed, "avow.ledger_entry_malformed"),
@@ -165,8 +167,38 @@ def test_should_verify_a_freshly_signed_receipt() -> None:
 
     verify_signature(receipt, expected_public_key=_EXPECTED)
 
+    assert receipt.model_dump()["schema"] == "avow.receipt/v1"
     assert len(receipt.signature) == 128
     assert len(receipt.public_key) == 64
+
+
+@pytest.mark.parametrize("schema", [None, "avow.receipt/v0", ""])
+def test_should_reject_missing_or_wrong_receipt_schema_during_verification(
+    schema: str | None,
+) -> None:
+    receipt = sign_payload(_payload(), SigningKey(_SEED))
+    forged = receipt.model_copy(update={"receipt_schema": schema})
+
+    with pytest.raises(AvowError) as caught:
+        verify_signature(forged, expected_public_key=_EXPECTED)
+
+    assert type(caught.value).__name__ == "ReceiptSchemaMismatch"
+    assert caught.value.code == "avow.receipt_schema_mismatch"
+
+
+@pytest.mark.parametrize("schema_update", [{}, {"schema": "avow.receipt/v0"}, {"schema": ""}])
+def test_should_reject_missing_or_wrong_receipt_schema_during_parsing(
+    schema_update: dict[str, str],
+) -> None:
+    receipt_data = sign_payload(_payload(), SigningKey(_SEED)).model_dump(mode="json")
+    receipt_data.pop("schema")
+    receipt_data.update(schema_update)
+
+    with pytest.raises(AvowError) as caught:
+        SignedReceipt[_EvidenceSubject].model_validate(receipt_data)
+
+    assert type(caught.value).__name__ == "ReceiptSchemaMismatch"
+    assert caught.value.code == "avow.receipt_schema_mismatch"
 
 
 def test_should_be_byte_identical_when_signed_twice() -> None:
@@ -326,6 +358,8 @@ def test_should_snapshot_an_already_validated_model_without_revalidation() -> No
 
 def test_should_export_the_complete_envelope_surface() -> None:
     assert avow.SignedReceipt is SignedReceipt
+    assert avow.RECEIPT_SCHEMA == "avow.receipt/v1"
+    assert avow.ReceiptSchemaMismatch.code == "avow.receipt_schema_mismatch"
     assert _PUBLIC_FUNCTIONS <= set(avow.__all__)
     assert all(callable(getattr(avow, name)) for name in _PUBLIC_FUNCTIONS)
 
