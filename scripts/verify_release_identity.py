@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 _ARGUMENT_COUNT = 2
+_PYTHON_PRERELEASE = re.compile(r"^(\d+\.\d+\.\d+)\.dev(\d+)$")
 
 
 def _python_version() -> str:
@@ -27,13 +28,20 @@ def _typescript_version() -> str:
     return version
 
 
+def _npm_spelling(python_version: str) -> str:
+    match = _PYTHON_PRERELEASE.fullmatch(python_version)
+    if match is None:
+        return python_version
+    return f"{match.group(1)}-dev.{match.group(2)}"
+
+
 def main() -> int:
     if len(sys.argv) != _ARGUMENT_COUNT:
         print("usage: verify_release_identity.py vX.Y.Z", file=sys.stderr)
         return 1
     python_version, typescript_version = _python_version(), _typescript_version()
-    expected = f"v{python_version}"
-    if python_version != typescript_version or sys.argv[1] != expected:
+    expected = f"v{typescript_version}"
+    if _npm_spelling(python_version) != typescript_version or sys.argv[1] != expected:
         print("release tag and artifact versions do not match", file=sys.stderr)
         return 1
     print(f"verified release identity: {expected}")

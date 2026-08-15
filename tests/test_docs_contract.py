@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -25,6 +26,13 @@ def _source_version() -> str:
     match = re.search(r'^__version__ = "([^"]+)"$', source, re.MULTILINE)
     assert match is not None
     return match.group(1)
+
+
+def _npm_source_version() -> str:
+    package = json.loads(Path("ts/package.json").read_text(encoding="utf-8"))
+    version = package.get("version") if isinstance(package, dict) else None
+    assert isinstance(version, str)
+    return version
 
 
 def _first_paragraph(markdown: str) -> str:
@@ -163,7 +171,19 @@ def test_should_state_proof_limits_and_unpublished_split_status() -> None:
     assert f"`{_source_version()}`" in markdown
     assert re.search(r"local split candidate", markdown, re.I)
     assert re.search(r"not\s+published", markdown, re.I)
-    assert re.search(r"published `avow` `0\.4\.1`[^.]*untouched", markdown, re.I)
+    assert re.search(r"published\s+`avow` `0\.4\.1`[^.]*untouched", markdown, re.I)
+
+
+def test_should_state_both_unpublished_candidate_versions_without_registry_drift() -> None:
+    # Given the Python and npm source candidates plus their reader-facing status
+    root = _readme()
+    quickstart = Path("QUICKSTART.md").read_text(encoding="utf-8")
+    typescript = _TYPESCRIPT_README.read_text(encoding="utf-8")
+    # Then local versions use ecosystem spellings while published 0.4.1 stays untouched
+    assert (_source_version(), _npm_source_version()) == ("0.5.0.dev0", "0.5.0-dev.0")
+    assert all("`0.5.0-dev.0`" in text for text in (root, quickstart, typescript))
+    assert re.search(r"published `@edgeproc/avow` `0\.4\.1`\s+also remains\s+untouched", root)
+    assert "not published" in typescript
 
 
 def test_should_resolve_every_readme_local_link() -> None:

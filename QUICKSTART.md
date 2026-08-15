@@ -41,8 +41,9 @@ AVOW_DEMO_DIR="$PWD/demo-output" bash examples/run_evidence_loop.sh
 
 ## Prove the wheel, outside the repository
 
-The checkout is source, not an installed package. Version `0.5.0.dev0` is not
-published, so build and install its wheel to prove the real package artifact:
+The checkout is source, not an installed package. Python `0.5.0.dev0` and npm
+`0.5.0-dev.0` are local candidates and are not published, so build and install the
+wheel to prove the real Python package artifact:
 
 ```bash
 uv build --wheel

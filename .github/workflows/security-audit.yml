@@ -1,0 +1,86 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Full-history secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_VERSION: "8.30.1"
+      - name: Scan every commit and the current tree
+        run: |
+          gitleaks git --log-opts=--all --redact --no-banner .
+          gitleaks dir --redact --no-banner .
+
+  dependencies:
+    name: Locked dependency audits
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: "11.5.0"
+          run_install: false
+      - name: Audit the frozen Python and npm graphs
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          uv lock --check
+          uv export --frozen --all-groups --no-emit-project --format requirements.txt --output-file /tmp/avow-audit-requirements.txt
+          uvx --from pip-audit==2.10.1 pip-audit --requirement /tmp/avow-audit-requirements.txt --require-hashes --strict --disable-pip --progress-spinner off
+          pnpm --dir ts install --frozen-lockfile --ignore-scripts
+          pnpm --dir ts audit --audit-level high
+
+  workflows:
+    name: actionlint and zizmor
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Run actionlint at a fixed version
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Run zizmor at a fixed version
+        run: uvx zizmor==1.29.0 --persona=auditor --min-severity=low --offline --strict-collection .github

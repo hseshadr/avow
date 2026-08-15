@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python 3.13
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Verify exact commit
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Run the Python gate
+        run: |
+          uv sync --frozen --all-groups
+          uv run poe gate
+          git diff --exit-code
+
+  typescript:
+    name: TypeScript on Node 22
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: "11.5.0"
+          run_install: false
+      - name: Verify exact commit and Node major
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(node -p 'process.versions.node.split(".")[0]')" = "22"
+      - name: Run the TypeScript gate
+        run: |
+          pnpm --dir ts install --frozen-lockfile --ignore-scripts
+          pnpm --dir ts gate
+
+  vector-parity:
+    name: Python and TypeScript vector parity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: "11.5.0"
+          run_install: false
+      - name: Replay the shared vectors at the exact commit
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          uv sync --frozen --all-groups
+          pnpm --dir ts install --frozen-lockfile --ignore-scripts
+          uv run pytest tests/test_vectors.py -q
+          pnpm --dir ts exec vitest run src/canonical.test.ts src/receipt.test.ts
+
+  mutation:
+    name: Mutation and tamper guards
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: "11.5.0"
+          run_install: false
+      - name: Exercise tamper and detached-snapshot failures
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          uv sync --frozen --all-groups
+          pnpm --dir ts install --frozen-lockfile --ignore-scripts
+          uv run pytest tests/test_envelope.py tests/test_ledger.py -q
+          pnpm --dir ts exec vitest run src/receipt.test.ts
+
+  example:
+    name: Real installed-wheel example
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - name: Run the exact-commit example
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          uv sync --frozen --all-groups
+          uv run pytest tests/test_example.py -q
+          bash examples/run_evidence_loop.sh
+
+  artifacts:
+    name: Wheel, sdist, and npm artifacts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.11.32"
+          enable-cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: "11.5.0"
+          run_install: false
+      - name: Build and clean-install exact-commit artifacts
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          uv sync --frozen --all-groups
+          pnpm --dir ts install --frozen-lockfile --ignore-scripts
+          bash scripts/build_release_artifacts.sh release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: avow-ci-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 7

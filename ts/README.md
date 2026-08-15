@@ -5,8 +5,8 @@
 Avow creates signed, tamper-evident records. Give it any JSON evidence; it
 returns a receipt that another machine can verify offline.
 
-This source package is an unpublished extraction candidate. No registry release
-is implied.
+This source package is the `0.5.0-dev.0` extraction candidate and is not published.
+The published `@edgeproc/avow` `0.4.1` remains untouched; no registry release is implied.
 
 ## Usage
 

@@ -98,10 +98,10 @@ not encryption or redaction.
 
 ## Version and publication status
 
-The Python source version is `0.5.0.dev0`. It is a local split candidate and is not
-published. The published `avow` `0.4.1` remains untouched. The published
-`@edgeproc/avow` `0.4.1` also remains untouched. No command in this README publishes,
-tags, or changes either registry release.
+The Python source version is `0.5.0.dev0`; the npm source version is its SemVer spelling,
+`0.5.0-dev.0`. Both are local split candidates and are not published. The published
+`avow` `0.4.1` remains untouched. The published `@edgeproc/avow` `0.4.1` also remains
+untouched. No command in this README publishes, tags, or changes either registry release.
 
 ## Next steps
 
