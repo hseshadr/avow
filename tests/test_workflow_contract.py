@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -100,14 +101,23 @@ def _wrong_node_environment(tmp_path: Path) -> dict[str, str]:
     return dict(os.environ) | {"PATH": f"{tmp_path}:/usr/bin:/bin"}
 
 
+def _expose_command(tools: Path, command: str, source: dict[str, str]) -> None:
+    executable = shutil.which(command, path=source["PATH"])
+    assert executable is not None
+    target = tools / command
+    target.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(executable)} "$@"\n',
+        encoding="utf-8",
+    )
+    target.chmod(0o755)
+
+
 def _without_coreutils_environment(tmp_path: Path) -> dict[str, str]:
     source = _node_environment()
     tools = tmp_path / "tools"
     tools.mkdir()
     for command in ("node", "npm", "pnpm", "uv"):
-        executable = shutil.which(command, path=source["PATH"])
-        assert executable is not None
-        (tools / command).symlink_to(Path(executable).resolve())
+        _expose_command(tools, command, source)
     return source | {"PATH": f"{tools}:/usr/bin:/bin"}
 
 
@@ -116,9 +126,7 @@ def _workflow_pnpm_environment(tmp_path: Path) -> dict[str, str]:
     tools = tmp_path / "workflow-tools"
     tools.mkdir()
     for command in ("node", "npm", "pnpm", "uv"):
-        executable = shutil.which(command, path=source["PATH"])
-        assert executable is not None
-        (tools / command).symlink_to(Path(executable).resolve())
+        _expose_command(tools, command, source)
     corepack = tools / "corepack"
     corepack.write_text(
         "#!/bin/sh\necho unexpected Corepack invocation >&2\nexit 86\n",
@@ -291,6 +299,43 @@ def test_should_build_with_workflow_pinned_pnpm_without_invoking_corepack(tmp_pa
     assert len(tuple((artifacts / "python").glob("*.whl"))) == 1
     assert len(tuple((artifacts / "python").glob("*.tar.gz"))) == 1
     assert len(tuple((artifacts / "npm").glob("*.tgz"))) == 1
+
+
+def test_should_preserve_a_self_relative_hosted_pnpm_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given a hosted pnpm shim that locates its module relative to its invoked path
+    host = tmp_path / "host"
+    module = host / "global/v11/test/node_modules/pnpm/bin/pnpm.mjs"
+    module.parent.mkdir(parents=True)
+    module.write_text("#!/bin/sh\necho 11.5.0\n", encoding="utf-8")
+    module.chmod(0o755)
+    binaries = host / "bin"
+    binaries.mkdir()
+    for command in ("node", "npm", "uv"):
+        binary = binaries / command
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+    pnpm = binaries / "pnpm"
+    pnpm.write_text(
+        '#!/bin/sh\nexec "$(dirname "$0")/../global/v11/test/'
+        'node_modules/pnpm/bin/pnpm.mjs" "$@"\n',
+        encoding="utf-8",
+    )
+    pnpm.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(binaries))
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    # When the restricted test PATH exposes that launcher
+    environment = _workflow_pnpm_environment(isolated)
+    result = subprocess.run(
+        ["pnpm", "--version"], check=False, capture_output=True, text=True, env=environment
+    )
+    # Then pnpm still resolves its real adjacent module rather than the temporary PATH
+    assert (result.returncode, result.stdout) == (0, "11.5.0\n")
 
 
 def test_should_build_a_small_runtime_only_python_sdist(tmp_path: Path) -> None:
