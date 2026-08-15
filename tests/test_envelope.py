@@ -6,7 +6,7 @@ from collections.abc import Iterator, Mapping
 
 import pytest
 from nacl.signing import SigningKey
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 import avow
 import avow.errors as errors_module
@@ -114,6 +114,18 @@ class _NestedSubject(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     metadata: dict[str, str]
+
+
+class _ValidatedNestedSubject(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str
+    metadata: dict[str, str]
+
+    @field_validator("label")
+    @classmethod
+    def append_marker(cls, value: str) -> str:
+        return f"{value}!"
 
 
 class _ChangingMapping(Mapping[str, JsonValue]):
@@ -249,6 +261,17 @@ def test_should_snapshot_nested_state_from_a_frozen_pydantic_subject() -> None:
 
     subject.metadata["region"] = "changed"
 
+    assert receipt.payload.metadata == {"region": "us-west"}
+    assert verify_receipt(receipt, expected_public_key=_EXPECTED) is None
+
+
+def test_should_snapshot_an_already_validated_model_without_revalidation() -> None:
+    subject = _ValidatedNestedSubject(label="a", metadata={"region": "us-west"})
+
+    receipt = sign_payload(subject, SigningKey(_SEED))
+    subject.metadata["region"] = "changed"
+
+    assert receipt.payload.label == "a!"
     assert receipt.payload.metadata == {"region": "us-west"}
     assert verify_receipt(receipt, expected_public_key=_EXPECTED) is None
 

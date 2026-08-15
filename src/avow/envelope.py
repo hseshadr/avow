@@ -62,16 +62,15 @@ def _subject_json(payload: SubjectInput) -> JsonValue:
     return dict(payload)
 
 
-def _json_snapshot(payload: SubjectInput) -> JsonValue:
-    """Read the subject once and detach all nested JSON state."""
-    return copy.deepcopy(_subject_json(payload))
-
-
-def _stored_subject(payload: SubjectInput, snapshot: JsonValue) -> Subject:
-    """Rebuild models from, or retain mappings as, the detached snapshot."""
+def _snapshot_subject(payload: SubjectInput) -> tuple[Subject, JsonValue]:
+    """Detach validated state, then derive its one canonical JSON snapshot."""
     if isinstance(payload, BaseModel):
-        return payload.__class__.model_validate(snapshot)
-    return cast(dict[str, JsonValue], snapshot)
+        _require_frozen(payload)
+        stored_model = payload.model_copy(deep=True)
+        snapshot = cast(JsonValue, stored_model.model_dump(mode="json"))
+        return stored_model, snapshot
+    stored_mapping = copy.deepcopy(dict(payload))
+    return stored_mapping, stored_mapping
 
 
 def payload_digest(payload: SubjectInput) -> str:
@@ -109,8 +108,7 @@ def sign_payload(  # type: ignore[misc]  # overloaded generic receipt is invaria
     payload: SubjectInput, signing_key: SigningKey
 ) -> SignedReceipt[Subject]:
     """Hash and Ed25519-sign any frozen subject into a verifiable receipt."""
-    snapshot = _json_snapshot(payload)
-    stored = _stored_subject(payload, snapshot)
+    stored, snapshot = _snapshot_subject(payload)
     return _seal_snapshot(stored, snapshot, signing_key)
 
 
