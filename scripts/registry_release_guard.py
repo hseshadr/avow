@@ -6,6 +6,7 @@ import argparse
 import base64
 import hashlib
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -19,6 +20,7 @@ _PROVENANCE_TYPE = "https://slsa.dev/provenance/v1"
 _NPM_ATTESTATION_ROOT = "https://registry.npmjs.org/-/npm/v1/attestations/"
 _PYTHON_FILE_COUNT = 2
 _NOT_FOUND = 404
+_NPM_VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$")
 
 
 def _mapping(value: object) -> dict[str, object]:
@@ -91,6 +93,13 @@ def provenance_payload_valid(payload: object | None) -> bool:
     return any(isinstance(items, list) and bool(items) for items in collections)
 
 
+def npm_dist_tag(version: str) -> str:
+    """Map exact stable and prerelease SemVer versions to safe npm channels."""
+    if _NPM_VERSION.fullmatch(version) is None:
+        raise ValueError("npm release version is not valid SemVer")
+    return "next" if "-" in version else "latest"
+
+
 def npm_release_state(path: Path, payload: object | None, attestation: object | None) -> bool:
     """Return whether npm needs publishing; reject any existing drift."""
     if payload is None:
@@ -160,9 +169,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_decision(path: Path, publish: bool) -> None:
+def _write_decision(path: Path, publish: bool, registry: str, version: str) -> None:
+    lines = [f"publish={'true' if publish else 'false'}"]
+    if registry == "npm":
+        lines.append(f"dist-tag={npm_dist_tag(version)}")
     with path.open("a", encoding="utf-8") as output:
-        output.write(f"publish={'true' if publish else 'false'}\n")
+        output.write("\n".join(lines) + "\n")
 
 
 def _run(arguments: argparse.Namespace) -> bool:
@@ -181,7 +193,12 @@ def main() -> int:
     except (OSError, ValueError, urllib.error.URLError) as error:
         print(str(error), file=sys.stderr)
         return 1
-    _write_decision(cast(Path, arguments.github_output), publish)
+    _write_decision(
+        cast(Path, arguments.github_output),
+        publish,
+        cast(str, arguments.registry),
+        cast(str, arguments.version),
+    )
     message = (
         "registry artifact is missing"
         if publish

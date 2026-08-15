@@ -100,6 +100,7 @@ jobs:
       contents: read # Checkout the unprivileged registry guard.
     outputs:
       publish: ${{ steps.registry.outputs.publish }}
+      dist-tag: ${{ steps.registry.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -121,6 +122,7 @@ jobs:
   publish-python:
     name: Publish missing PyPI release through OIDC
     needs: [build, preflight-python, preflight-npm]
+    if: ${{ needs.preflight-python.outputs.publish == 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read # Download the reviewed Python artifacts.
@@ -131,7 +133,6 @@ jobs:
           name: avow-release-${{ github.sha }}
           path: release
       - name: Publish Python artifacts
-        if: needs.preflight-python.outputs.publish == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           packages-dir: release/python/
@@ -141,6 +142,7 @@ jobs:
   publish-npm:
     name: Publish missing npm release through OIDC
     needs: [build, preflight-python, preflight-npm]
+    if: ${{ needs.preflight-npm.outputs.publish == 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read # Download the reviewed npm artifact.
@@ -151,20 +153,27 @@ jobs:
           name: avow-release-${{ github.sha }}
           path: release
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        if: needs.preflight-npm.outputs.publish == 'true'
         with:
           node-version: "24.15.0"
           package-manager-cache: false
       - name: Pin an OIDC-capable npm client
-        if: needs.preflight-npm.outputs.publish == 'true'
         run: npm install --global npm@12.0.2 # zizmor: ignore[adhoc-packages]
       - name: Publish npm artifact
-        if: needs.preflight-npm.outputs.publish == 'true'
-        run: npm publish release/npm/*.tgz --access public --provenance
+        env:
+          NPM_DIST_TAG: ${{ needs.preflight-npm.outputs.dist-tag }}
+        run: npm publish release/npm/*.tgz --access public --provenance --tag "$NPM_DIST_TAG"
 
   verify-published:
     name: Verify registry bytes
-    needs: [publish-python, publish-npm]
+    needs: [preflight-python, preflight-npm, publish-python, publish-npm]
+    if: >-
+      ${{
+        always() &&
+        needs.preflight-python.result == 'success' &&
+        needs.preflight-npm.result == 'success' &&
+        (needs.publish-python.result == 'success' || needs.publish-python.result == 'skipped') &&
+        (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
+      }}
     runs-on: ubuntu-24.04
     permissions:
       actions: read # Download the reviewed bytes for registry comparison.
@@ -177,8 +186,13 @@ jobs:
         with:
           name: avow-release-${{ github.sha }}
           path: release
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.15.0"
+          package-manager-cache: false
       - name: Verify registries serve the reviewed bytes and provenance
         env:
+          NPM_DIST_TAG: ${{ needs.preflight-npm.outputs.dist-tag }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -192,7 +206,8 @@ jobs:
               python3 -m scripts.registry_release_guard \
                 npm release/npm "$VERSION" /tmp/npm-state && \
               grep -qx 'publish=false' /tmp/pypi-state && \
-              grep -qx 'publish=false' /tmp/npm-state; then
+              grep -qx 'publish=false' /tmp/npm-state && \
+              test "$(npm view @edgeproc/avow dist-tags."$NPM_DIST_TAG")" = "$VERSION"; then
               echo "verified registry bytes for avow ${PYTHON_VERSION} and @edgeproc/avow ${VERSION}"
               exit 0
             fi

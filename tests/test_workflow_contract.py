@@ -312,7 +312,7 @@ def test_should_recheck_digest_metadata_and_registries_after_publish() -> None:
     preflights = {"preflight-python", "preflight-npm"}
     assert preflights <= set(_job(workflow, "publish-python")["needs"])
     assert preflights <= set(_job(workflow, "publish-npm")["needs"])
-    assert _job(workflow, "verify-published")["needs"] == ["publish-python", "publish-npm"]
+    assert {"publish-python", "publish-npm"} <= set(_job(workflow, "verify-published")["needs"])
     assert "scripts.registry_release_guard" in registry
     assert "pypi release/python" in registry and "npm release/npm" in registry
     assert registry.count("publish=false") == 2
@@ -384,6 +384,52 @@ def test_should_pin_supported_npm_only_in_the_npm_publish_lane() -> None:
     # Then the current supported client is exact and confined to that lane
     assert "npm install --global npm@12.0.2" in npm_lane
     assert source.count("npm@12.0.2") == 1
+
+
+def test_should_keep_npm_prereleases_off_the_latest_channel() -> None:
+    # Given stable and prerelease versions accepted by the release workflow
+    sys.path.insert(0, str(Path.cwd()))
+    try:
+        guard = importlib.import_module("scripts.registry_release_guard")
+    finally:
+        sys.path.pop(0)
+    workflow = _workflow("publish.yml")
+    preflight = _job(workflow, "preflight-npm")
+    publish = _job(workflow, "publish-npm")
+    command = _commands(publish)
+    # Then only stable releases select latest and every prerelease selects next
+    assert guard.npm_dist_tag("0.5.0") == "latest"
+    assert guard.npm_dist_tag("0.5.0-dev.0") == "next"
+    assert guard.npm_dist_tag("0.5.0-rc.1") == "next"
+    assert _mapping(preflight["outputs"])["dist-tag"] == "${{ steps.registry.outputs.dist-tag }}"
+    assert '--tag "$NPM_DIST_TAG"' in command
+    assert "needs.preflight-npm.outputs.dist-tag" in str(publish)
+    registry = _commands(_job(workflow, "verify-published"))
+    assert 'npm view @edgeproc/avow dist-tags."$NPM_DIST_TAG"' in registry
+
+
+def test_should_skip_the_entire_oidc_job_for_identical_registry_releases() -> None:
+    # Given both minimal OIDC jobs and their unprivileged final verifier
+    workflow = _workflow("publish.yml")
+    python = _job(workflow, "publish-python")
+    npm = _job(workflow, "publish-npm")
+    verifier = _job(workflow, "verify-published")
+    # Then no OIDC-capable runner starts for an already-complete registry lane
+    assert python["if"] == "${{ needs.preflight-python.outputs.publish == 'true' }}"
+    assert npm["if"] == "${{ needs.preflight-npm.outputs.publish == 'true' }}"
+    assert all("if" not in step for step in _steps(python))
+    assert all("if" not in step for step in _steps(npm))
+    # And the final unprivileged verifier accepts only successful or safely skipped lanes
+    assert set(verifier["needs"]) == {
+        "preflight-python",
+        "preflight-npm",
+        "publish-python",
+        "publish-npm",
+    }
+    condition = str(verifier["if"])
+    assert "always()" in condition
+    assert condition.count("result == 'success'") == 4
+    assert condition.count("result == 'skipped'") == 2
 
 
 def test_should_fail_closed_until_python_and_npm_versions_align(tmp_path: Path) -> None:
