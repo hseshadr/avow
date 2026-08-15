@@ -20,6 +20,12 @@ class CanonicalizationFailed(AvowError):
     code: ClassVar[str] = "avow.canonicalization_failed"
 
 
+class SubjectNotFrozen(AvowError):
+    """A Pydantic subject permits mutation after the caller requests sealing."""
+
+    code: ClassVar[str] = "avow.subject_not_frozen"
+
+
 class SignatureInvalid(AvowError):
     """A receipt failed to verify under the pinned signer.
 

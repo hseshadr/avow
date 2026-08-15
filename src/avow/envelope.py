@@ -13,18 +13,25 @@ branches on its keys or meaning."""
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
-from typing import cast
+from typing import cast, overload
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 from pydantic import BaseModel, ConfigDict
 
 from avow.canonical import JsonValue, canonical_bytes, content_hash
-from avow.errors import PayloadHashMismatch, SignatureBytesInvalid, SignerMismatch
+from avow.errors import (
+    PayloadHashMismatch,
+    SignatureBytesInvalid,
+    SignerMismatch,
+    SubjectNotFrozen,
+)
 
 
-type Subject = BaseModel | Mapping[str, JsonValue]
+type Subject = BaseModel | dict[str, JsonValue]
+type SubjectInput = BaseModel | Mapping[str, JsonValue]
 
 
 class SignedReceipt[SubjectT: Subject](BaseModel):
@@ -41,30 +48,70 @@ class SignedReceipt[SubjectT: Subject](BaseModel):
     signature: str
 
 
-def _subject_json(payload: Subject) -> JsonValue:
+def _require_frozen(payload: BaseModel) -> None:
+    """Reject models whose fields may be rebound after sealing."""
+    if payload.model_config.get("frozen") is not True:
+        raise SubjectNotFrozen("Pydantic subjects must set model_config frozen=True")
+
+
+def _subject_json(payload: SubjectInput) -> JsonValue:
     """Convert either supported subject boundary to canonicalizable JSON."""
     if isinstance(payload, BaseModel):
+        _require_frozen(payload)
         return cast(JsonValue, payload.model_dump(mode="json"))
     return dict(payload)
 
 
-def payload_digest(payload: Subject) -> str:
+def _json_snapshot(payload: SubjectInput) -> JsonValue:
+    """Read the subject once and detach all nested JSON state."""
+    return copy.deepcopy(_subject_json(payload))
+
+
+def _stored_subject(payload: SubjectInput, snapshot: JsonValue) -> Subject:
+    """Rebuild models from, or retain mappings as, the detached snapshot."""
+    if isinstance(payload, BaseModel):
+        return payload.__class__.model_validate(snapshot)
+    return cast(dict[str, JsonValue], snapshot)
+
+
+def payload_digest(payload: SubjectInput) -> str:
     """Content-hash of a canonical subject (any frozen model)."""
     return content_hash(_subject_json(payload))
 
 
-def sign_payload[SubjectT: Subject](
-    payload: SubjectT, signing_key: SigningKey
-) -> SignedReceipt[SubjectT]:
-    """Hash and Ed25519-sign any frozen subject into a verifiable receipt."""
-    message = canonical_bytes(_subject_json(payload))
+def _seal_snapshot(
+    payload: Subject, snapshot: JsonValue, signing_key: SigningKey
+) -> SignedReceipt[Subject]:
+    """Derive one receipt entirely from a detached canonical snapshot."""
+    message = canonical_bytes(snapshot)
     signature = signing_key.sign(message).signature
     return SignedReceipt(
         payload=payload,
-        payload_hash=payload_digest(payload),
+        payload_hash=content_hash(snapshot),
         public_key=bytes(signing_key.verify_key).hex(),
         signature=signature.hex(),
     )
+
+
+@overload
+def sign_payload[SubjectT: BaseModel](
+    payload: SubjectT, signing_key: SigningKey
+) -> SignedReceipt[SubjectT]: ...
+
+
+@overload
+def sign_payload(
+    payload: Mapping[str, JsonValue], signing_key: SigningKey
+) -> SignedReceipt[dict[str, JsonValue]]: ...
+
+
+def sign_payload(  # type: ignore[misc]  # overloaded generic receipt is invariant
+    payload: SubjectInput, signing_key: SigningKey
+) -> SignedReceipt[Subject]:
+    """Hash and Ed25519-sign any frozen subject into a verifiable receipt."""
+    snapshot = _json_snapshot(payload)
+    stored = _stored_subject(payload, snapshot)
+    return _seal_snapshot(stored, snapshot, signing_key)
 
 
 def _check_hash[SubjectT: Subject](receipt: SignedReceipt[SubjectT]) -> None:

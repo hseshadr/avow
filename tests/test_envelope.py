@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Iterator, Mapping
 
 import pytest
 from nacl.signing import SigningKey
 from pydantic import BaseModel, ConfigDict
 
 import avow
+import avow.errors as errors_module
 from avow.canonical import JsonValue
 from avow.envelope import SignedReceipt, payload_digest, sign_payload, verify_signature
 from avow.errors import (
@@ -26,13 +28,36 @@ from avow.errors import (
     SignatureBytesInvalid,
     SignatureInvalid,
     SignerMismatch,
+    SubjectNotFrozen,
 )
 from avow.verify import verify_receipt
 
 _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
+_PUBLIC_FUNCTIONS = frozenset(
+    {
+        "append",
+        "append_and_save_head",
+        "canonical_bytes",
+        "content_hash",
+        "generate_signing_key",
+        "load_signing_key",
+        "payload_digest",
+        "public_key_hex",
+        "read_entries",
+        "read_public_key",
+        "save_head",
+        "save_public_key",
+        "save_signing_key",
+        "sign_payload",
+        "verify_ledger",
+        "verify_receipt",
+        "verify_signature",
+    }
+)
 _AVOW_CODES: tuple[tuple[type[AvowError], str], ...] = (
     (CanonicalizationFailed, "avow.canonicalization_failed"),
+    (SubjectNotFrozen, "avow.subject_not_frozen"),
     (SignatureInvalid, "avow.signature_invalid"),
     (SignerMismatch, "avow.signer_mismatch"),
     (SignatureBytesInvalid, "avow.signature_invalid"),
@@ -77,6 +102,35 @@ class _PolicyDecision(BaseModel):
 
     policy: str
     decision: str
+
+
+class _MutableSubject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: str
+
+
+class _NestedSubject(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    metadata: dict[str, str]
+
+
+class _ChangingMapping(Mapping[str, JsonValue]):
+    def __init__(self) -> None:
+        self.reads = 0
+
+    def __getitem__(self, key: str) -> JsonValue:
+        if key != "revision":
+            raise KeyError(key)
+        self.reads += 1
+        return self.reads
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("revision",))
+
+    def __len__(self) -> int:
+        return 1
 
 
 def _payload() -> _EvidenceSubject:
@@ -168,21 +222,41 @@ def test_should_seal_opaque_subjects_without_domain_specific_adapters() -> None:
         assert verify_receipt(first, expected_public_key=_EXPECTED) is None
 
 
-def test_should_export_the_complete_envelope_surface() -> None:
-    exports = (
-        avow.canonical_bytes,
-        avow.content_hash,
-        avow.generate_signing_key,
-        avow.payload_digest,
-        avow.public_key_hex,
-        avow.sign_payload,
-        avow.verify_ledger,
-        avow.verify_receipt,
-        avow.verify_signature,
-    )
+def test_should_snapshot_a_stateful_mapping_once_before_signing() -> None:
+    subject = _ChangingMapping()
 
+    receipt = sign_payload(subject, SigningKey(_SEED))
+    result = verify_receipt(receipt, expected_public_key=_EXPECTED)
+
+    assert result is None
+    assert receipt.payload == {"revision": 1}
+    assert subject.reads == 1
+
+
+def test_should_reject_a_mutable_pydantic_subject_with_a_typed_code() -> None:
+    subject = _MutableSubject(value="mutable")
+
+    with pytest.raises(AvowError) as caught:
+        sign_payload(subject, SigningKey(_SEED))
+
+    assert type(caught.value).__name__ == "SubjectNotFrozen"
+    assert caught.value.code == "avow.subject_not_frozen"
+
+
+def test_should_snapshot_nested_state_from_a_frozen_pydantic_subject() -> None:
+    subject = _NestedSubject(metadata={"region": "us-west"})
+    receipt = sign_payload(subject, SigningKey(_SEED))
+
+    subject.metadata["region"] = "changed"
+
+    assert receipt.payload.metadata == {"region": "us-west"}
+    assert verify_receipt(receipt, expected_public_key=_EXPECTED) is None
+
+
+def test_should_export_the_complete_envelope_surface() -> None:
     assert avow.SignedReceipt is SignedReceipt
-    assert all(callable(exported) for exported in exports)
+    assert _PUBLIC_FUNCTIONS <= set(avow.__all__)
+    assert all(callable(getattr(avow, name)) for name in _PUBLIC_FUNCTIONS)
 
 
 def test_should_load_no_domain_or_scientific_runtime_dependency() -> None:
@@ -260,3 +334,24 @@ def test_should_carry_a_stable_avow_code_when_raised(error_cls: type[AvowError],
     assert isinstance(caught.value, AvowError)
     assert caught.value.code == code
     assert "replay" not in caught.value.code
+
+
+def _published_error_types() -> set[type[AvowError]]:
+    return {
+        value
+        for value in vars(errors_module).values()
+        if isinstance(value, type) and issubclass(value, AvowError) and value is not AvowError
+    }
+
+
+def test_should_cover_every_published_avow_error_type() -> None:
+    covered = {error_cls for error_cls, _ in _AVOW_CODES}
+
+    assert covered == _published_error_types()
+
+
+def test_should_publish_no_error_code_that_claims_replay_detection() -> None:
+    codes = {error_type.code for error_type in _published_error_types()}
+
+    assert codes
+    assert all("replay" not in code for code in codes)
