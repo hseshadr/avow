@@ -98,7 +98,8 @@ export async function verifySignature<S extends JsonValue>(
   receipt: SignedReceipt<S>,
   expectedPublicKey: string,
 ): Promise<void> {
-  if ((await contentHash(receipt.payload)) !== receipt.payload_hash) {
+  const snapshot = snapshotJsonValue(receipt.payload);
+  if ((await contentHash(snapshot)) !== receipt.payload_hash) {
     throw new PayloadHashMismatch(
       "payload hash does not match payload content",
     );
@@ -112,7 +113,7 @@ export async function verifySignature<S extends JsonValue>(
     throw new SignerMismatch("receipt public key is not the expected signer");
   }
   await checkSignatureBytes(
-    canonicalBytes(receipt.payload),
+    canonicalBytes(snapshot),
     receipt.signature,
     expectedPublicKey,
   );

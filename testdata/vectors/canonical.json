@@ -100,6 +100,12 @@
     "content_hash": "sha256:3fe01def54b1c6cd795b2ebfcbab64150f6a507bce043040c662c682eebfed1e"
   },
   {
+    "name": "unicode_pair_top",
+    "payload": "😀",
+    "canonical_hex": "22f09f988022",
+    "content_hash": "sha256:7a0c50b92434b015545fe93ab723db2d4b2cdd14a441405624a9ce8be29f1d5a"
+  },
+  {
     "name": "number_top",
     "payload": 42.5,
     "canonical_hex": "34322e35",

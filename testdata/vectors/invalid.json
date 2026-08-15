@@ -1,0 +1,20 @@
+[
+  {
+    "name": "unsafe_integer",
+    "payload": 9007199254740992
+  },
+  {
+    "name": "lone_high_surrogate",
+    "payload": "\ud800"
+  },
+  {
+    "name": "lone_low_surrogate",
+    "payload": "\udc00"
+  },
+  {
+    "name": "nested_lone_surrogate",
+    "payload": {
+      "bad": "\ud800"
+    }
+  }
+]

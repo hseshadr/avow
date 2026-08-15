@@ -34,34 +34,77 @@ function invalidJson(cause?: unknown): CanonicalizationFailed {
   );
 }
 
+function hasValidUnicodeScalars(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 >= value.length) return false;
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isSupportedNumber(value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  if (!Number.isInteger(value) || Number.isSafeInteger(value)) return true;
+  return Math.abs(value) >= 1e21;
+}
+
+function snapshotArray(
+  value: JsonValue[],
+  ancestors: Set<object>,
+): JsonValue[] {
+  if (Reflect.ownKeys(value).length !== value.length + 1) throw invalidJson();
+  return Array.from({ length: value.length }, (_, index) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor?.enumerable || !("value" in descriptor))
+      throw invalidJson();
+    return snapshotValue(descriptor.value as JsonValue, ancestors);
+  });
+}
+
+function snapshotObject(
+  value: { [key: string]: JsonValue },
+  ancestors: Set<object>,
+): { [key: string]: JsonValue } {
+  const entries: [string, JsonValue][] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") throw invalidJson();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor))
+      throw invalidJson();
+    entries.push([
+      key,
+      snapshotValue(descriptor.value as JsonValue, ancestors),
+    ]);
+  }
+  return Object.fromEntries(entries);
+}
+
 function snapshotValue(value: JsonValue, ancestors: Set<object>): JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean"
-  ) {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (!hasValidUnicodeScalars(value)) throw invalidJson();
     return value;
   }
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw invalidJson();
+    if (!isSupportedNumber(value)) throw invalidJson();
     return value;
   }
   if (typeof value !== "object") throw invalidJson();
   if (ancestors.has(value)) throw invalidJson();
   ancestors.add(value);
   try {
-    if (Array.isArray(value)) {
-      return Array.from(value, (item) => snapshotValue(item, ancestors));
-    }
+    if (Array.isArray(value)) return snapshotArray(value, ancestors);
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null)
       throw invalidJson();
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        snapshotValue(item, ancestors),
-      ]),
-    );
+    return snapshotObject(value, ancestors);
   } finally {
     ancestors.delete(value);
   }

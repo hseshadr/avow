@@ -33,9 +33,7 @@
       },
       "payload_hash": "sha256:4c97a67eafb6aa19a58e74907a23ecbfac0a5fe94146b87b0660011786746e82",
       "signature": "7954b427ccf3841b89b6c26da2ad1281537a69d690d6457f85e747cf64ce99ea78b38ab5852ce39e5d3693ab65c251b3d73d978808b1e769a02db95667708c00"
-    }
-  ],
-  "json_receipts": [
+    },
     {
       "payload": [
         1,

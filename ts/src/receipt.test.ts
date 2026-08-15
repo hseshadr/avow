@@ -21,7 +21,6 @@ interface ReceiptVectors {
   seed_hex: string;
   public_key: string;
   receipts: ReceiptVector[];
-  json_receipts: ReceiptVector[];
 }
 
 const data: ReceiptVectors = JSON.parse(
@@ -30,7 +29,7 @@ const data: ReceiptVectors = JSON.parse(
     "utf8",
   ),
 );
-const receiptVectors = [...data.receipts, ...data.json_receipts];
+const receiptVectors = data.receipts;
 
 const WRONG_KEY =
   "0000000000000000000000000000000000000000000000000000000000000000";
@@ -43,8 +42,7 @@ function jsonShape(value: JsonValue): string {
 
 describe("Python-signed receipts verify in TypeScript", () => {
   it("contains at least one receipt vector", () => {
-    expect(data.receipts.length).toBeGreaterThan(0);
-    expect(data.json_receipts.length).toBeGreaterThan(0);
+    expect(receiptVectors.length).toBeGreaterThan(0);
   });
 
   it("covers every supported top-level JSON shape", () => {
@@ -156,6 +154,27 @@ describe("receipt snapshots", () => {
     await expect(signPayload(payload, data.seed_hex)).rejects.toMatchObject({
       code: "avow.canonicalization_failed",
     });
+  });
+});
+
+describe("verification snapshots", () => {
+  it("rejects a payload changed between hash and signature verification", async () => {
+    const seed = data.seed_hex;
+    const before = { state: "before" };
+    const after = { state: "after" };
+    const beforeReceipt = await signPayload(before, seed);
+    const afterReceipt = await signPayload(after, seed);
+    const mutable = { state: "before" };
+    const inconsistent = {
+      ...beforeReceipt,
+      payload: mutable,
+      signature: afterReceipt.signature,
+    };
+
+    const pending = verifySignature(inconsistent, beforeReceipt.public_key);
+    mutable.state = "after";
+
+    await expect(pending).rejects.toThrow(SignatureInvalid);
   });
 });
 

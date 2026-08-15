@@ -11,38 +11,91 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+import pytest
+from nacl.signing import SigningKey
 
-from avow import SignedReceipt, canonical_bytes, content_hash, verify_signature
+from avow import (
+    SignedReceipt,
+    canonical_bytes,
+    content_hash,
+    public_key_hex,
+    sign_payload,
+    verify_signature,
+)
+from avow.canonical import JsonValue
+from avow.errors import CanonicalizationFailed
 
 _CANONICAL = Path("testdata/vectors/canonical.json")
 _RECEIPTS = Path("testdata/vectors/receipts.json")
+_INVALID = Path("testdata/vectors/invalid.json")
+
+_JSON_SHAPES = {"array", "boolean", "null", "number", "object", "string"}
+_INVALID_NAMES = {
+    "lone_high_surrogate",
+    "lone_low_surrogate",
+    "nested_lone_surrogate",
+    "unsafe_integer",
+}
+_TYPE_SHAPES: dict[type[object], str] = {
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+    str: "string",
+}
 
 
-class _Subject(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    kind: str
-    score: float
-    tags: tuple[str, ...]
+def _json_shape(value: JsonValue) -> str:
+    if value is None:
+        return "null"
+    return _TYPE_SHAPES.get(type(value), "number")
 
 
-def test_canonical_vectors_replay() -> None:
+def test_should_replay_every_canonical_shape() -> None:
+    # Given
     vectors = json.loads(_CANONICAL.read_text(encoding="utf-8"))
-    # incl. floats 0.5, 0.1, 1e21, -0.0, unicode, nesting, empty, key-shuffle
+
+    # Then
     assert len(vectors) >= 8
+    assert {_json_shape(v["payload"]) for v in vectors} == _JSON_SHAPES
     for v in vectors:
         assert canonical_bytes(v["payload"]).hex() == v["canonical_hex"]
         assert content_hash(v["payload"]) == v["content_hash"]
 
 
-def test_receipt_vectors_verify() -> None:
+def _assert_receipt_vector(r: dict[str, JsonValue], data: dict[str, JsonValue]) -> None:
+    receipt = SignedReceipt[JsonValue](
+        payload=r["payload"],
+        payload_hash=str(r["payload_hash"]),
+        public_key=str(data["public_key"]),
+        signature=str(r["signature"]),
+    )
+    verify_signature(receipt, expected_public_key=str(data["public_key"]))
+    regenerated = sign_payload(r["payload"], SigningKey(bytes.fromhex(str(data["seed_hex"]))))
+    assert regenerated.payload_hash == r["payload_hash"]
+    assert regenerated.public_key == data["public_key"]
+    assert regenerated.signature == r["signature"]
+
+
+def test_should_replay_every_receipt_shape() -> None:
+    # Given
     data = json.loads(_RECEIPTS.read_text(encoding="utf-8"))
-    assert len(data["receipts"]) >= 1
-    for r in data["receipts"]:
-        receipt = SignedReceipt[_Subject](
-            payload=_Subject(**r["payload"]),
-            payload_hash=r["payload_hash"],
-            public_key=data["public_key"],
-            signature=r["signature"],
-        )
-        verify_signature(receipt, expected_public_key=data["public_key"])
+    receipts = data["receipts"]
+
+    # Then
+    assert receipts
+    assert "json_receipts" not in data
+    assert {_json_shape(r["payload"]) for r in receipts} == _JSON_SHAPES
+    assert public_key_hex(SigningKey(bytes.fromhex(data["seed_hex"]))) == data["public_key"]
+    for receipt in receipts:
+        _assert_receipt_vector(receipt, data)
+
+
+def test_should_reject_every_invalid_vector() -> None:
+    # Given
+    vectors = json.loads(_INVALID.read_text(encoding="utf-8"))
+
+    # Then
+    assert {v["name"] for v in vectors} == _INVALID_NAMES
+    for vector in vectors:
+        with pytest.raises(CanonicalizationFailed):
+            canonical_bytes(vector["payload"])

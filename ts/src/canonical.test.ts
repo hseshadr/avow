@@ -10,9 +10,21 @@ interface CanonicalVector {
   content_hash: string;
 }
 
+interface InvalidVector {
+  name: string;
+  payload: JsonValue;
+}
+
 const vectors: CanonicalVector[] = JSON.parse(
   readFileSync(
     new URL("../../testdata/vectors/canonical.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+const invalidVectors: InvalidVector[] = JSON.parse(
+  readFileSync(
+    new URL("../../testdata/vectors/invalid.json", import.meta.url),
     "utf8",
   ),
 );
@@ -60,6 +72,21 @@ describe("RFC-8785 byte identity with the Python rfc8785 kernel", () => {
 });
 
 describe("canonicalBytes fail-closed", () => {
+  it("executes every required shared invalid vector", () => {
+    expect(invalidVectors.map((vector) => vector.name).sort()).toEqual([
+      "lone_high_surrogate",
+      "lone_low_surrogate",
+      "nested_lone_surrogate",
+      "unsafe_integer",
+    ]);
+    for (const vector of invalidVectors) {
+      expect(
+        () => canonicalBytes(vector.payload),
+        `${vector.name} must fail closed`,
+      ).toThrow(CanonicalizationFailed);
+    }
+  });
+
   it("throws a coded CanonicalizationFailed on a non-JSON value", () => {
     // `undefined` is not a JSON value; canonicalize returns undefined for it.
     const bad = undefined as unknown as JsonValue;
@@ -109,6 +136,40 @@ describe("canonicalBytes fail-closed", () => {
       get() {
         throw new Error("caller data must not escape");
       },
+    }) as JsonValue;
+    expect(() => canonicalBytes(payload)).toThrow(CanonicalizationFailed);
+  });
+
+  it("rejects an own symbol key on an object", () => {
+    const payload = { visible: true } as Record<PropertyKey, JsonValue>;
+    payload[Symbol("hidden")] = "not signed";
+    expect(() => canonicalBytes(payload as JsonValue)).toThrow(
+      CanonicalizationFailed,
+    );
+  });
+
+  it("rejects an own symbol key on an array", () => {
+    const payload = ["visible"] as JsonValue[] & Record<PropertyKey, JsonValue>;
+    payload[Symbol("hidden")] = "not signed";
+    expect(() => canonicalBytes(payload)).toThrow(CanonicalizationFailed);
+  });
+
+  it("rejects a custom array property", () => {
+    const payload = ["visible"] as JsonValue[] & Record<string, JsonValue>;
+    payload.hidden = "not signed";
+    expect(() => canonicalBytes(payload)).toThrow(CanonicalizationFailed);
+  });
+
+  it("rejects a non-enumerable object property", () => {
+    const payload = Object.defineProperty({ visible: true }, "hidden", {
+      value: "not signed",
+    }) as JsonValue;
+    expect(() => canonicalBytes(payload)).toThrow(CanonicalizationFailed);
+  });
+
+  it("rejects a non-enumerable custom array property", () => {
+    const payload = Object.defineProperty(["visible"], "hidden", {
+      value: "not signed",
     }) as JsonValue;
     expect(() => canonicalBytes(payload)).toThrow(CanonicalizationFailed);
   });
