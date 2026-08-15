@@ -129,6 +129,19 @@ function packedFiles(): string[] {
   }
 }
 
+function verifierDeclarationDoc(): string {
+  runPackageManager(["build"]);
+  const declaration = readFileSync(
+    join(PACKAGE_ROOT, "dist", "receipt.d.ts"),
+    "utf8",
+  );
+  const signature = declaration.indexOf(
+    "export declare function verifySignature",
+  );
+  const comment = declaration.lastIndexOf("/**", signature);
+  return declaration.slice(comment, signature);
+}
+
 function runPackageManager(args: string[]): string {
   const executable = process.env.npm_execpath;
   if (executable) {
@@ -146,6 +159,15 @@ function runPackageManager(args: string[]): string {
 }
 
 describe("standalone Avow package boundary", () => {
+  it("documents verifier failures in their execution order", () => {
+    const apiDoc = verifierDeclarationDoc();
+
+    expect(apiDoc).toContain("ReceiptSchemaMismatch");
+    expect(apiDoc.indexOf("ReceiptSchemaMismatch")).toBeLessThan(
+      apiDoc.indexOf("PayloadHashMismatch"),
+    );
+  });
+
   it("exports only the canonical, receipt, key, and error kernel", () => {
     expect(
       existsSync(ENTRY_PATH),

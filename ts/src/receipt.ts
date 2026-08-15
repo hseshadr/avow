@@ -81,6 +81,7 @@ async function checkSignatureBytes(
 
 /**
  * Verify a receipt against a *pinned* signer key. Fail-closed: throws a coded
+ * `ReceiptSchemaMismatch` (schema is missing or unsupported),
  * `PayloadHashMismatch` (content hash disagrees), `SignerMismatch` (embedded key
  * is not the pinned signer), or `SignatureBytesInvalid` (the signature does not
  * verify). The latter two both extend the published `SignatureInvalid` base.
@@ -94,11 +95,11 @@ async function checkSignatureBytes(
  * the browser build — so if you need "have I seen this before?", keep that state
  * yourself (a server-side nonce, or the Python `avow.ledger` chain).
  *
- * The order mirrors Python exactly: recompute the hash first, then reject any
- * receipt whose embedded `public_key` is not the caller-pinned key — independent
- * of the signature, because that field lives outside the signed payload and a
- * re-signed forgery can swap it in — then verify the detached signature under
- * the pinned key.
+ * The order mirrors Python exactly: require the supported receipt schema first,
+ * recompute the payload hash, then reject any receipt whose embedded `public_key`
+ * is not the caller-pinned key — independent of the signature, because that field
+ * lives outside the signed payload and a re-signed forgery can swap it in — then
+ * verify the detached signature under the pinned key.
  */
 export async function verifySignature<S extends JsonValue>(
   receipt: SignedReceipt<S>,
