@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "avow"
+dynamic = ["version"]
+description = "Sign arbitrary JSON evidence and verify it offline."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Harish Seshadri" }]
+dependencies = [
+  "pydantic>=2.10,<3",
+  "pynacl>=1.5,<2",
+  "rfc8785>=0.1.4,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3,<9"]
+
+[tool.hatch.version]
+path = "src/avow/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/avow"]
