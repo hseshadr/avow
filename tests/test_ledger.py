@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 from nacl.signing import SigningKey
+from pydantic import BaseModel, ConfigDict
 
 import avow.ledger as ledger_module
-from assay.receipt import ReceiptPayload, ScoreReceipt, payload_digest, sign_payload
+from avow.envelope import SignedReceipt, payload_digest, sign_payload
 from avow.errors import (
     AvowError,
     LedgerEntryMalformed,
@@ -46,14 +47,17 @@ _SEED = bytes(range(32))
 _EXPECTED = bytes(SigningKey(_SEED).verify_key).hex()
 
 
-def _receipt(score: float) -> ScoreReceipt:
-    payload = ReceiptPayload(
-        assay_version="0.0.1",
-        metric="binary",
-        metric_version="1",
-        inputs_hash="sha256:abc",
-        score=score,
-    )
+class _LedgerSubject(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value: float
+
+
+type _LedgerReceipt = SignedReceipt[_LedgerSubject]
+
+
+def _receipt(value: float) -> _LedgerReceipt:
+    payload = _LedgerSubject(value=value)
     return sign_payload(payload, SigningKey(_SEED))
 
 
@@ -68,8 +72,13 @@ def _ledger_of(path: Path, *scores: float) -> LedgerHead:
     return head
 
 
-def _verify(path: Path, head: LedgerHead) -> tuple[ScoreReceipt, ...]:
-    return verify_integrity(path, ScoreReceipt, expected_public_key=_EXPECTED, expected_head=head)
+def _verify(path: Path, head: LedgerHead) -> tuple[_LedgerReceipt, ...]:
+    return verify_integrity(
+        path,
+        SignedReceipt[_LedgerSubject],
+        expected_public_key=_EXPECTED,
+        expected_head=head,
+    )
 
 
 def _lines(path: Path) -> list[str]:
@@ -105,11 +114,11 @@ def test_should_append_only_and_read_back_in_order(tmp_path: Path) -> None:
     append(_receipt(0.1), path=path)
     append(_receipt(0.2), path=path)
     # When read back
-    entries = read_all(path, ScoreReceipt)
+    entries = read_all(path, SignedReceipt[_LedgerSubject])
     # Then both survive, in append order (append-only, nothing overwritten)
     assert len(entries) == 2
-    assert entries[0].payload.score == 0.1
-    assert entries[1].payload.score == 0.2
+    assert entries[0].payload.value == 0.1
+    assert entries[1].payload.value == 0.2
 
 
 def test_should_return_a_head_that_advances_with_every_append(tmp_path: Path) -> None:
@@ -125,6 +134,20 @@ def test_should_return_a_head_that_advances_with_every_append(tmp_path: Path) ->
     assert second != EMPTY_HEAD
     # And a ledger verifies against the head its last append returned
     assert len(_verify(path, second)) == 2
+
+
+def test_should_verify_through_the_explicit_ledger_api(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.jsonl"
+    head = _ledger_of(path, 0.1, 0.2)
+
+    receipts = ledger_module.verify_ledger(
+        path,
+        SignedReceipt[_LedgerSubject],
+        expected_public_key=_EXPECTED,
+        expected_head=head,
+    )
+
+    assert tuple(receipt.payload.value for receipt in receipts) == (0.1, 0.2)
 
 
 def test_resubmitting_one_signed_receipt_creates_a_new_valid_ledger_entry(
@@ -144,7 +167,9 @@ def test_public_combined_append_signature_has_no_cli_install_callback() -> None:
     assert "install" not in inspect.signature(append_and_save_head).parameters
 
 
-def test_should_serialize_ledger_and_saved_head_across_real_processes(tmp_path: Path) -> None:
+def test_should_serialize_ledger_and_saved_head_across_real_processes(
+    tmp_path: Path,
+) -> None:
     # Given four independent writers sharing one ledger and one convenience pin
     ledger = tmp_path / "ledger.jsonl"
     head_path = tmp_path / "ledger.head"
@@ -306,7 +331,9 @@ def test_should_bound_direct_tail_decoding_and_reject_a_blank_line() -> None:
         _decode_last_line(b"\n", truncated=False)
 
 
-def test_should_reject_a_blank_tail_without_corrupting_the_chain(tmp_path: Path) -> None:
+def test_should_reject_a_blank_tail_without_corrupting_the_chain(
+    tmp_path: Path,
+) -> None:
     # Given a valid chain is followed by more blank bytes than bounded tail recovery reads
     ledger = tmp_path / "ledger.jsonl"
     head = append(_receipt(0.1), path=ledger)
@@ -412,8 +439,8 @@ def test_should_read_the_opened_inode_when_the_path_is_swapped(
 
     monkeypatch.setattr(ledger_module, "_require_ledger_size", swap_after_open)
     opened = read_entries(ledger)
-    assert ScoreReceipt.model_validate(opened[0].receipt).payload.score == 0.1
-    assert read_all(ledger, ScoreReceipt)[0].payload.score == 0.9
+    assert SignedReceipt[_LedgerSubject].model_validate(opened[0].receipt).payload.value == 0.1
+    assert read_all(ledger, SignedReceipt[_LedgerSubject])[0].payload.value == 0.9
 
 
 def test_should_code_opened_descriptor_and_stream_failures(
@@ -453,7 +480,9 @@ def test_should_refuse_to_replace_the_ledger_with_its_own_head(tmp_path: Path) -
     assert not ledger.exists()
 
 
-def test_should_refuse_a_head_hard_linked_to_the_existing_ledger(tmp_path: Path) -> None:
+def test_should_refuse_a_head_hard_linked_to_the_existing_ledger(
+    tmp_path: Path,
+) -> None:
     # Given two path spellings are hard links to the same existing ledger inode
     ledger, alias = tmp_path / "ledger.jsonl", tmp_path / "ledger.head"
     first = append(_receipt(0.1), path=ledger)
@@ -507,7 +536,9 @@ def test_should_code_a_persistence_path_resolution_failure(
     # When combined persistence validates those paths, it fails closed and coded
     with pytest.raises(AvowError) as caught:
         append_and_save_head(
-            _receipt(0.1), path=tmp_path / "ledger.jsonl", head_path=tmp_path / "ledger.head"
+            _receipt(0.1),
+            path=tmp_path / "ledger.jsonl",
+            head_path=tmp_path / "ledger.head",
         )
     assert caught.value.code == "avow.ledger_configuration_invalid"
 
@@ -526,7 +557,9 @@ def test_should_code_an_absent_parent_identity_failure(
     monkeypatch.setattr(Path, "exists", refuse_exists)
     with pytest.raises(AvowError) as caught:
         append_and_save_head(
-            _receipt(0.1), path=tmp_path / "ledger.jsonl", head_path=tmp_path / "ledger.head"
+            _receipt(0.1),
+            path=tmp_path / "ledger.jsonl",
+            head_path=tmp_path / "ledger.head",
         )
     assert caught.value.code == "avow.ledger_configuration_invalid"
 
@@ -536,7 +569,9 @@ def test_should_resolve_two_absent_spellings_of_one_parent(tmp_path: Path) -> No
     assert _same_parent(tmp_path / "absent" / "a", tmp_path / "absent" / "b")
 
 
-def test_should_survive_immediate_process_exit_after_append_returns(tmp_path: Path) -> None:
+def test_should_survive_immediate_process_exit_after_append_returns(
+    tmp_path: Path,
+) -> None:
     # Given a child appends and exits without Python cleanup after append reports success
     ledger = tmp_path / "ledger.jsonl"
     worker = multiprocessing.get_context("spawn").Process(target=_append_then_exit, args=(ledger,))
@@ -555,7 +590,7 @@ def test_should_fail_closed_when_ledger_is_absent(tmp_path: Path) -> None:
     with pytest.raises(LedgerUnreadable):
         _verify(missing, EMPTY_HEAD)
     with pytest.raises(LedgerUnreadable):
-        read_all(missing, ScoreReceipt)
+        read_all(missing, SignedReceipt[_LedgerSubject])
 
 
 def test_should_fail_closed_when_ledger_path_is_a_directory(tmp_path: Path) -> None:
@@ -596,7 +631,7 @@ def test_should_fail_closed_when_a_line_is_malformed(tmp_path: Path) -> None:
 def test_should_fail_closed_when_a_line_is_not_a_receipt_of_the_expected_type(
     tmp_path: Path,
 ) -> None:
-    # Given a well-formed chain entry whose receipt is not a ScoreReceipt at all
+    # Given a well-formed chain entry whose receipt is not the expected type at all
     path = tmp_path / "ledger.jsonl"
     _ledger_of(path, 0.1)
     _rewrite(path, ['{"seq":0,"prev_hash":"sha256:' + "0" * 64 + '","receipt":{"nope":1}}'])
@@ -607,7 +642,9 @@ def test_should_fail_closed_when_a_line_is_not_a_receipt_of_the_expected_type(
         _verify(path, current_head(path))
 
 
-def test_a_fresh_empty_ledger_verifies_only_against_the_empty_head(tmp_path: Path) -> None:
+def test_a_fresh_empty_ledger_verifies_only_against_the_empty_head(
+    tmp_path: Path,
+) -> None:
     # Given a ledger file that exists but holds no entries yet
     path = tmp_path / "ledger.jsonl"
     path.touch()
@@ -626,7 +663,7 @@ def test_should_raise_integrity_error_when_a_line_is_tampered(tmp_path: Path) ->
     # Given a ledger whose stored payload was corrupted on disk
     path = tmp_path / "ledger.jsonl"
     _ledger_of(path, 0.1)
-    corrupted = path.read_text().replace('"score":0.1', '"score":0.999')
+    corrupted = path.read_text().replace('"value":0.1', '"value":0.999')
     path.write_text(corrupted)
     # When integrity is verified against the head the DOCTORED file claims — so the chain
     # walk and the head comparison both pass and only the per-entry check can object
@@ -635,16 +672,21 @@ def test_should_raise_integrity_error_when_a_line_is_tampered(tmp_path: Path) ->
         _verify(path, current_head(path))
 
 
-def test_should_reject_a_rehashed_tampered_entry_without_the_signing_key(tmp_path: Path) -> None:
+def test_should_reject_a_rehashed_tampered_entry_without_the_signing_key(
+    tmp_path: Path,
+) -> None:
     # Given a ledger entry an adversary edited AND re-hashed. With no signing key they
     # can still recompute the PUBLIC payload_hash, so a hash-only check would wave the
     # forgery through — the exact laundering a real tamper-evidence check must catch.
     path = tmp_path / "ledger.jsonl"
     _ledger_of(path, 0.1)
-    stored = read_all(path, ScoreReceipt)[0]
-    forged_payload = stored.payload.model_copy(update={"score": 0.999})
+    stored = read_all(path, SignedReceipt[_LedgerSubject])[0]
+    forged_payload = stored.payload.model_copy(update={"value": 0.999})
     forged = stored.model_copy(
-        update={"payload": forged_payload, "payload_hash": payload_digest(forged_payload)}
+        update={
+            "payload": forged_payload,
+            "payload_hash": payload_digest(forged_payload),
+        }
     )
     _rewrite(path, [])
     append(forged, path=path)
@@ -658,13 +700,7 @@ def test_should_reject_a_rehashed_tampered_entry_without_the_signing_key(tmp_pat
 def test_should_reject_an_entry_signed_by_another_key(tmp_path: Path) -> None:
     # Given a chain-perfect ledger whose entry was signed by a key nobody pinned
     path = tmp_path / "ledger.jsonl"
-    payload = ReceiptPayload(
-        assay_version="0.0.1",
-        metric="binary",
-        metric_version="1",
-        inputs_hash="sha256:abc",
-        score=0.5,
-    )
+    payload = _LedgerSubject(value=0.5)
     append(sign_payload(payload, SigningKey(bytes(range(32, 64)))), path=path)
     # Then the chain being intact does not make the entry trusted
     with pytest.raises(LedgerIntegrityError):
@@ -743,7 +779,9 @@ def test_should_reject_a_ledger_whose_entries_were_reordered(tmp_path: Path) -> 
         _verify(path, head)
 
 
-def test_should_reject_a_ledger_whose_interior_entries_were_swapped(tmp_path: Path) -> None:
+def test_should_reject_a_ledger_whose_interior_entries_were_swapped(
+    tmp_path: Path,
+) -> None:
     # Given a 4-entry ledger with its two MIDDLE entries swapped. This is the attack the
     # pinned head cannot see: the entry count is unchanged and the last line is
     # untouched, so the ledger still ends exactly where the operator pinned it. Only
@@ -758,7 +796,9 @@ def test_should_reject_a_ledger_whose_interior_entries_were_swapped(tmp_path: Pa
         _verify(path, head)
 
 
-def test_should_reject_a_ledger_whose_interior_entry_was_replaced(tmp_path: Path) -> None:
+def test_should_reject_a_ledger_whose_interior_entry_was_replaced(
+    tmp_path: Path,
+) -> None:
     # Given a 3-entry ledger whose MIDDLE entry was swapped out for a genuine entry from
     # another ledger by the same signer, at the position it claims. Count unchanged, last
     # line unchanged — the pinned head still matches, so only the chain link can catch it.
@@ -776,7 +816,9 @@ def test_should_reject_a_ledger_whose_interior_entry_was_replaced(tmp_path: Path
         _verify(path, head)
 
 
-def test_should_reject_an_entry_that_claims_a_position_it_is_not_in(tmp_path: Path) -> None:
+def test_should_reject_an_entry_that_claims_a_position_it_is_not_in(
+    tmp_path: Path,
+) -> None:
     # Given a single genuine entry whose sequence number was edited to claim it is the
     # eighth entry of some longer history, with the head pinned to that exact one-entry
     # file. Chain and head both agree; only the position claim is a lie.
@@ -878,7 +920,10 @@ def test_should_keep_old_pin_and_fail_closed_when_atomic_head_replace_fails(
     # Then the old pin remains complete, temporary files are cleaned, and verification
     # fails closed against it instead of blessing a truncated version of the history
     assert read_head(pin) == first
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["ledger.head", "ledger.jsonl"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "ledger.head",
+        "ledger.jsonl",
+    ]
     with pytest.raises(LedgerIntegrityError):
         _verify(ledger, read_head(pin))
     # Once the simulated fault clears, a later append still cannot absorb the unknown

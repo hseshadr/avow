@@ -7,8 +7,8 @@ from functools import partial
 from nacl.signing import SigningKey
 from pydantic import BaseModel, ConfigDict
 
-from avow.benchmarks._contracts import Stats, require, sample, stats
 from avow.envelope import sign_payload, verify_signature
+from benchmarks._contracts import Stats, require, sample, stats
 
 _SEED = bytes(range(32))
 

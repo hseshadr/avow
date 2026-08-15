@@ -3,18 +3,15 @@ without any network or original inputs), confirm the receipt's content-hash matc
 its payload, its embedded key is the expected signer, and its Ed25519 signature is
 valid under that pinned key.
 
-Generic over the subject: the score face passes a scoring receipt and the effect
-face passes an effect receipt. One public verifier serves both, because the envelope
-signs a subject's canonical JSON without inspecting its fields."""
+The verifier is generic over the subject because the envelope signs canonical JSON
+without inspecting its fields."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-
-from avow.envelope import SignedReceipt, verify_signature
+from avow.envelope import SignedReceipt, Subject, verify_signature
 
 
-def verify_receipt[SubjectT: BaseModel](
+def verify_receipt[SubjectT: Subject](
     receipt: SignedReceipt[SubjectT], *, expected_public_key: str
 ) -> None:
     """Verify any signed receipt offline against a pinned signer; raises a typed error

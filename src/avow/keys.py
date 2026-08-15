@@ -94,9 +94,14 @@ def _stage_pair(key: SigningKey, private: Path, public: Path) -> tuple[Path, Pat
     return private_stage, public_stage
 
 
+def _pair_exists(private: Path, public: Path) -> bool:
+    """Whether either identity artifact already occupies its destination."""
+    return any(path.exists() or path.is_symlink() for path in (private, public))
+
+
 def _create_pair(private: Path, public: Path) -> SigningKey:
     """Create one new pair while refusing to rotate an existing identity."""
-    if private.exists() or private.is_symlink() or public.exists() or public.is_symlink():
+    if _pair_exists(private, public):
         raise FileExistsError("keygen refuses to overwrite an existing key artifact")
     key = generate_signing_key()
     private_stage, public_stage = _stage_pair(key, private, public)

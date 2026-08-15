@@ -11,8 +11,6 @@ from pathlib import Path
 
 from nacl.signing import SigningKey
 
-from avow.benchmarks._contracts import SampleBatch, Stats, peak_rss_mib, require, sample, stats
-from avow.benchmarks.envelope import BenchmarkSubject
 from avow.envelope import SignedReceipt, sign_payload
 from avow.ledger import (
     GENESIS_HASH,
@@ -24,6 +22,8 @@ from avow.ledger import (
     save_head,
     verify_integrity,
 )
+from benchmarks._contracts import SampleBatch, Stats, peak_rss_mib, require, sample, stats
+from benchmarks.envelope import BenchmarkSubject
 
 _SEED = bytes(range(32))
 _APPEND_COUNT = 200
@@ -39,15 +39,10 @@ def _worker(ledger: Path, head: Path, result: Path) -> None:
 
 
 def _entry(index: int, previous: str, receipt: SignedReceipt[BenchmarkSubject]) -> LedgerEntry:
-    return LedgerEntry(
-        seq=index,
-        prev_hash=previous,
-        receipt=receipt.model_dump(mode="json"),
-    )
+    return LedgerEntry(seq=index, prev_hash=previous, receipt=receipt.model_dump(mode="json"))
 
 
 def _seed(ledger: Path, head: Path) -> None:
-    """Build one realistic history once; timed appends must read only its bounded tail."""
     receipt = sign_payload(BenchmarkSubject(evidence="ledger"), SigningKey(_SEED))
     previous = GENESIS_HASH
     with ledger.open("w", encoding="utf-8") as handle:
@@ -60,9 +55,7 @@ def _seed(ledger: Path, head: Path) -> None:
 
 def _start(ledger: Path, head: Path, results: list[Path]) -> list[BaseProcess]:
     context = multiprocessing.get_context("spawn")
-    workers: list[BaseProcess] = [
-        context.Process(target=_worker, args=(ledger, head, result)) for result in results
-    ]
+    workers = [context.Process(target=_worker, args=(ledger, head, result)) for result in results]
     for worker in workers:
         worker.start()
     return workers

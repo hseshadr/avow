@@ -7,31 +7,31 @@ being deterministic) an identical signature. Verification recomputes the hash (c
 tampered content) and checks the detached signature under a **pinned** key (catching a
 forged or swapped key).
 
-Unification (literal, not aspirational): ``sign_payload`` / ``verify_signature`` /
-``payload_digest`` are typed over ``SubjectT`` bound to ``BaseModel`` and produce /
-consume a generic ``SignedReceipt[SubjectT]``. The *score* face (``assay``) supplies a
-scoring subject; the *effect* face (``writ``) supplies an effect subject; both reuse this
-exact hash-sign-verify seam with zero type changes — only the subject differs, never the
-envelope. This module is the shared trust boundary and knows nothing of either face."""
+``sign_payload`` and ``verify_signature`` operate on a generic ``SignedReceipt``. The
+subject may be a frozen Pydantic model or a JSON-compatible mapping; the envelope never
+branches on its keys or meaning."""
 
 from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import cast
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 from pydantic import BaseModel, ConfigDict
 
-from avow.canonical import canonical_bytes, content_hash
+from avow.canonical import JsonValue, canonical_bytes, content_hash
 from avow.errors import PayloadHashMismatch, SignatureBytesInvalid, SignerMismatch
 
 
-class SignedReceipt[SubjectT: BaseModel](BaseModel):
+type Subject = BaseModel | Mapping[str, JsonValue]
+
+
+class SignedReceipt[SubjectT: Subject](BaseModel):
     """A signed subject: the subject plus its content-hash, public key and signature.
 
-    The envelope is generic over ``SubjectT`` (bound to ``BaseModel``) and never
-    inspects the subject's fields — it signs the subject's canonical JSON — so it is
-    agnostic to what the subject carries. The score face parametrizes it with a scoring
-    subject and the effect face with an effect subject; the subject bound is the literal
-    "one envelope, many subjects" unification claim."""
+    The envelope is generic over ``SubjectT`` and never inspects subject fields. It
+    signs canonical JSON, so unrelated applications share the same receipt contract."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -41,16 +41,23 @@ class SignedReceipt[SubjectT: BaseModel](BaseModel):
     signature: str
 
 
-def payload_digest(payload: BaseModel) -> str:
+def _subject_json(payload: Subject) -> JsonValue:
+    """Convert either supported subject boundary to canonicalizable JSON."""
+    if isinstance(payload, BaseModel):
+        return cast(JsonValue, payload.model_dump(mode="json"))
+    return dict(payload)
+
+
+def payload_digest(payload: Subject) -> str:
     """Content-hash of a canonical subject (any frozen model)."""
-    return content_hash(payload.model_dump(mode="json"))
+    return content_hash(_subject_json(payload))
 
 
-def sign_payload[SubjectT: BaseModel](
+def sign_payload[SubjectT: Subject](
     payload: SubjectT, signing_key: SigningKey
 ) -> SignedReceipt[SubjectT]:
     """Hash and Ed25519-sign any frozen subject into a verifiable receipt."""
-    message = canonical_bytes(payload.model_dump(mode="json"))
+    message = canonical_bytes(_subject_json(payload))
     signature = signing_key.sign(message).signature
     return SignedReceipt(
         payload=payload,
@@ -60,12 +67,12 @@ def sign_payload[SubjectT: BaseModel](
     )
 
 
-def _check_hash[SubjectT: BaseModel](receipt: SignedReceipt[SubjectT]) -> None:
+def _check_hash[SubjectT: Subject](receipt: SignedReceipt[SubjectT]) -> None:
     if payload_digest(receipt.payload) != receipt.payload_hash:
         raise PayloadHashMismatch("payload hash does not match payload content")
 
 
-def _require_signer[SubjectT: BaseModel](
+def _require_signer[SubjectT: Subject](
     receipt: SignedReceipt[SubjectT], expected_public_key: str
 ) -> None:
     """Require the caller-pinned signer, comparing hex by value."""
@@ -82,7 +89,7 @@ def _check_signature_bytes(message: bytes, signature: str, public_key: str) -> N
         raise SignatureBytesInvalid("signature does not match payload") from exc
 
 
-def verify_signature[SubjectT: BaseModel](
+def verify_signature[SubjectT: Subject](
     receipt: SignedReceipt[SubjectT], *, expected_public_key: str
 ) -> None:
     """Verify content and signer against a caller-pinned key, without freshness.
@@ -91,5 +98,5 @@ def verify_signature[SubjectT: BaseModel](
     see ``docs/OPERATIONS.md`` for the complete boundary."""
     _check_hash(receipt)
     _require_signer(receipt, expected_public_key)
-    message = canonical_bytes(receipt.payload.model_dump(mode="json"))
+    message = canonical_bytes(_subject_json(receipt.payload))
     _check_signature_bytes(message, receipt.signature, expected_public_key)

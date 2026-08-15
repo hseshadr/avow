@@ -22,9 +22,7 @@ def _build_wheel(output_dir: Path) -> Path:
 def _read_wheel(wheel_path: Path) -> tuple[list[str], bytes]:
     with zipfile.ZipFile(wheel_path) as wheel:
         members = wheel.namelist()
-        metadata_path = next(
-            name for name in members if name.endswith(".dist-info/METADATA")
-        )
+        metadata_path = next(name for name in members if name.endswith(".dist-info/METADATA"))
         return members, wheel.read(metadata_path)
 
 
@@ -49,9 +47,7 @@ def test_should_build_only_avow_distribution_and_package(tmp_path: Path) -> None
     name, version, packages = _inspect_wheel(_build_wheel(tmp_path))
     # Then both declared and built identities contain only Avow
     assert project["project"]["name"] == "avow"
-    assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/avow"
-    ]
+    assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/avow"]
     assert (name, version, packages) == ("avow", "0.5.0.dev0", {"avow"})
 
 

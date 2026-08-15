@@ -38,7 +38,9 @@ def test_should_write_key_file_with_owner_only_permissions(tmp_path: Path) -> No
     assert mode == 0o600
 
 
-def test_should_reset_permissions_when_rekeying_over_a_loose_file(tmp_path: Path) -> None:
+def test_should_reset_permissions_when_rekeying_over_a_loose_file(
+    tmp_path: Path,
+) -> None:
     # Given an existing key file with loose (world-readable) permissions
     path = tmp_path / "signing.key"
     path.write_bytes(b"x" * 32)

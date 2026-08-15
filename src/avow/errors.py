@@ -1,7 +1,7 @@
-"""Coded envelope-error catalog. Every envelope failure raises a typed ``AvowError``
-with a stable string ``code`` so callers (and any language binding) branch on cause
-without string-matching messages. These are the *trust-envelope* codes; the scoring
-face keeps its own ``assay.*`` catalog and the effect face its own."""
+"""Coded envelope-error catalog.
+
+Every failure raises a typed ``AvowError`` with a stable string ``code`` so callers
+branch on its cause without matching human-readable messages."""
 
 from __future__ import annotations
 

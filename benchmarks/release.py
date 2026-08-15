@@ -6,13 +6,13 @@ import json
 import subprocess
 import sys
 
-from avow.benchmarks._contracts import Stats
+from benchmarks._contracts import Stats
 
-_WORKLOADS = ("envelope", "classification", "ledger")
+_WORKLOADS = ("envelope", "ledger")
 
 
 def _isolated(workload: str) -> Stats:
-    command = [sys.executable, "-m", f"avow.benchmarks.{workload}"]
+    command = [sys.executable, "-m", f"benchmarks.{workload}"]
     completed = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603
     if completed.returncode:
         output = completed.stderr + completed.stdout

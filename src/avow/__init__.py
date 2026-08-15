@@ -1,9 +1,7 @@
-"""Avow: the shared trust envelope — one signed receipt, many subjects.
+"""Avow: sign opaque JSON evidence and verify it offline.
 
-Avow signs and verifies the *canonical JSON of a frozen subject model* under a pinned
-Ed25519 key, knowing nothing about what the subject means. The scoring face (``assay``)
-and the effect face (``writ``) both import this envelope; Avow imports neither. Base
-dependencies only: ``pydantic``, ``pydantic-settings``, ``pynacl``, ``rfc8785``."""
+Avow canonicalizes subjects, binds them to Ed25519 signatures, and verifies receipts
+against caller-pinned public keys without interpreting the subject's fields."""
 
 from __future__ import annotations
 
@@ -35,6 +33,7 @@ from avow.ledger import (
     read_entries,
     read_head,
     save_head,
+    verify_ledger,
     verify_integrity,
 )
 from avow.verify import verify_receipt
@@ -64,6 +63,7 @@ __all__ = [
     "save_signing_key",
     "sign_payload",
     "verify_integrity",
+    "verify_ledger",
     "verify_receipt",
     "verify_signature",
 ]

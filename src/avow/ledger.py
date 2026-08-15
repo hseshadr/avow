@@ -29,10 +29,9 @@ writer cannot reach — another host, a git commit, a printout. A head file sitt
 beside the ledger buys nothing against an attacker who can write both.
 
 Reading needs the concrete receipt type to deserialize into (``SignedReceipt[S]``),
-so ``read_all`` / ``verify_integrity`` take it as an argument. The score face passes
-``ScoreReceipt``; other faces pass their own parametrization. Chain-walking needs no
-such type: an entry's receipt is carried as JSON, so integrity of the *sequence* is
-checkable by a party that cannot parse the subjects at all.
+so ``read_all`` and verification take it as an argument. Chain-walking needs no such
+type: an entry's receipt is carried as JSON, so sequence integrity is checkable by a
+party that cannot parse the subjects at all.
 
 Reads fail CLOSED. A ledger that is missing, is not a regular file, cannot be read, or
 holds an unparseable line raises a coded error rather than reading as "no entries" —
@@ -58,7 +57,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from avow._atomic import sync_directory
 from avow.canonical import JsonValue, content_hash
-from avow.envelope import SignedReceipt, payload_digest
+from avow.envelope import SignedReceipt, Subject, payload_digest
 from avow.errors import (
     LedgerConfigurationInvalid,
     LedgerEntryMalformed,
@@ -125,7 +124,7 @@ def _head_after(entry: LedgerEntry) -> LedgerHead:
     return LedgerHead(count=entry.seq + 1, head_hash=entry_hash(entry))
 
 
-def _link_onto[S: BaseModel](head: LedgerHead, receipt: SignedReceipt[S]) -> LedgerEntry:
+def _link_onto[S: Subject](head: LedgerHead, receipt: SignedReceipt[S]) -> LedgerEntry:
     """Build the entry that extends a chain ending at ``head``."""
     return LedgerEntry(
         seq=head.count,
@@ -234,7 +233,7 @@ def _locked_ledger(path: Path, timeout_seconds: float) -> Iterator[TextIO]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _prepare_append[S: BaseModel](
+def _prepare_append[S: Subject](
     receipt: SignedReceipt[S], current: LedgerHead, size: int
 ) -> tuple[LedgerEntry, bytes]:
     """Validate and encode an append before any transaction artifact is installed."""
@@ -263,16 +262,13 @@ def _require_append_limits(size: int, head: LedgerHead, encoded: bytes) -> None:
         raise LedgerLimitExceeded(f"ledger exceeds {MAX_LEDGER_BYTES} bytes")
 
 
-def append[S: BaseModel](
+def append[S: Subject](
     receipt: SignedReceipt[S],
     *,
     path: Path,
     lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> LedgerHead:
-    """Durably append under a bounded process lock and return the new head.
-
-    Export the returned head beyond the ledger writer; otherwise truncation is not
-    detectable. See ``docs/OPERATIONS.md`` for failure and recovery bounds."""
+    """Durably append under a bounded lock and return the head to pin externally."""
     with _locked_ledger(path, lock_timeout_seconds) as handle:
         current = _current_locked_head(handle)
         entry, encoded = _prepare_append(receipt, current, os.fstat(handle.fileno()).st_size)
@@ -335,7 +331,7 @@ def read_entries(path: Path) -> tuple[LedgerEntry, ...]:
     return tuple(entries)
 
 
-def _entry_receipt[S: BaseModel](
+def _entry_receipt[S: Subject](
     entry: LedgerEntry, receipt_type: type[SignedReceipt[S]]
 ) -> SignedReceipt[S]:
     """Parse an entry's receipt into the caller's concrete type."""
@@ -345,7 +341,7 @@ def _entry_receipt[S: BaseModel](
         raise LedgerEntryMalformed(f"ledger entry is not a valid receipt: {exc}") from exc
 
 
-def read_all[S: BaseModel](
+def read_all[S: Subject](
     path: Path, receipt_type: type[SignedReceipt[S]]
 ) -> tuple[SignedReceipt[S], ...]:
     """Read every receipt from the ledger, failing closed if it cannot be read."""
@@ -387,7 +383,7 @@ def _verify_chain(entries: tuple[LedgerEntry, ...], expected_head: LedgerHead) -
         )
 
 
-def _verify_entry[S: BaseModel](receipt: SignedReceipt[S], expected_public_key: str) -> None:
+def _verify_entry[S: Subject](receipt: SignedReceipt[S], expected_public_key: str) -> None:
     """Fail closed unless the entry's hash matches AND its signature verifies under the
     pinned key. The hash pre-check names the corrupted entry; the signature check is what
     stops an adversary who recomputed the hash from laundering a forged payload through."""
@@ -399,7 +395,7 @@ def _verify_entry[S: BaseModel](receipt: SignedReceipt[S], expected_public_key: 
         raise LedgerIntegrityError(f"tampered ledger entry: {receipt.payload_hash}") from exc
 
 
-def verify_integrity[S: BaseModel](
+def verify_integrity[S: Subject](
     path: Path,
     receipt_type: type[SignedReceipt[S]],
     *,
@@ -413,6 +409,22 @@ def verify_integrity[S: BaseModel](
         _verify_entry(receipt, expected_public_key)
     _verify_chain(entries, expected_head)
     return receipts
+
+
+def verify_ledger[S: Subject](
+    path: Path,
+    receipt_type: type[SignedReceipt[S]],
+    *,
+    expected_public_key: str,
+    expected_head: LedgerHead,
+) -> tuple[SignedReceipt[S], ...]:
+    """Verify every receipt and chain link against caller-pinned trust anchors."""
+    return verify_integrity(
+        path,
+        receipt_type,
+        expected_public_key=expected_public_key,
+        expected_head=expected_head,
+    )
 
 
 def _stage_head(head: LedgerHead, path: Path) -> Path:
@@ -522,7 +534,7 @@ def _require_current_pin(current: LedgerHead, path: Path) -> None:
         raise LedgerRecoveryRequired("ledger head requires operator recovery")
 
 
-def append_and_save_head[S: BaseModel](
+def append_and_save_head[S: Subject](
     receipt: SignedReceipt[S],
     *,
     path: Path,
@@ -531,11 +543,14 @@ def append_and_save_head[S: BaseModel](
 ) -> LedgerHead:
     """Append and save a matching pin, or require recovery, under one bounded lock."""
     return _append_and_save_head_with_install(
-        receipt, path=path, head_path=head_path, lock_timeout_seconds=lock_timeout_seconds
+        receipt,
+        path=path,
+        head_path=head_path,
+        lock_timeout_seconds=lock_timeout_seconds,
     )
 
 
-def _append_and_save_head_with_install[S: BaseModel](
+def _append_and_save_head_with_install[S: Subject](
     receipt: SignedReceipt[S],
     *,
     path: Path,
@@ -565,7 +580,7 @@ def _finish_combined(
     return head
 
 
-def _combined_existing[S: BaseModel](
+def _combined_existing[S: Subject](
     receipt: SignedReceipt[S],
     handle: TextIO,
     path: Path,
