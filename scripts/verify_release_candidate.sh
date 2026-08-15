@@ -12,6 +12,7 @@ uv sync --frozen --all-groups
 corepack pnpm --dir ts install --frozen-lockfile --ignore-scripts
 
 uv run poe gate
+uv run python -m benchmarks.release
 corepack pnpm --dir ts gate
 uv run pytest tests/test_vectors.py -q
 corepack pnpm --dir ts exec vitest run src/canonical.test.ts src/receipt.test.ts

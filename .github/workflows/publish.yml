@@ -63,136 +63,136 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  publish:
-    name: OIDC publish only
+  preflight-python:
+    name: Check PyPI release state
     needs: [build]
     runs-on: ubuntu-24.04
     permissions:
-      actions: read # Download the artifact created by this workflow.
-      contents: read
-      id-token: write # Request short-lived PyPI and npm publishing identities.
+      actions: read # Download the reviewed release artifact.
+      contents: read # Checkout the unprivileged registry guard.
+    outputs:
+      publish: ${{ steps.registry.outputs.publish }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: avow-release-${{ github.sha }}
           path: release
-      - name: Verify downloaded artifact metadata
+      - name: Check existing PyPI bytes and provenance
+        id: registry
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           (cd release && sha256sum --check SHA256SUMS)
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          import tarfile
-          import zipfile
-          from email.parser import BytesParser
-          from pathlib import Path
+          VERSION="${RELEASE_TAG#v}"
+          PYTHON_VERSION="${VERSION/-dev./.dev}"
+          python3 -m scripts.registry_release_guard pypi release/python "$PYTHON_VERSION" "$GITHUB_OUTPUT"
 
-          root = Path("release")
-          wheels = tuple((root / "python").glob("*.whl"))
-          sdists = tuple((root / "python").glob("*.tar.gz"))
-          tarballs = tuple((root / "npm").glob("*.tgz"))
-          if tuple(map(len, (wheels, sdists, tarballs))) != (1, 1, 1):
-              raise SystemExit("downloaded artifact count mismatch")
-
-          with zipfile.ZipFile(wheels[0]) as archive:
-              names = tuple(name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
-              if len(names) != 1:
-                  raise SystemExit("wheel metadata count mismatch")
-              wheel = BytesParser().parsebytes(archive.read(names[0]))
-          with tarfile.open(sdists[0], "r:gz") as archive:
-              members = tuple(item for item in archive.getmembers() if item.name.endswith("/PKG-INFO"))
-              extracted = archive.extractfile(members[0]) if len(members) == 1 else None
-              if extracted is None:
-                  raise SystemExit("sdist metadata count mismatch")
-              sdist = BytesParser().parsebytes(extracted.read())
-          with tarfile.open(tarballs[0], "r:gz") as archive:
-              extracted = archive.extractfile("package/package.json")
-              if extracted is None:
-                  raise SystemExit("npm metadata is missing")
-              npm = json.loads(extracted.read())
-
-          python_version = wheel["Version"]
-          npm_version = npm.get("version") if isinstance(npm, dict) else None
-          match = re.fullmatch(r"(\d+\.\d+\.\d+)\.dev(\d+)", str(python_version))
-          expected_npm = f"{match.group(1)}-dev.{match.group(2)}" if match else python_version
-          identities = (wheel["Name"], sdist["Name"], sdist["Version"], npm.get("name"))
-          if identities != ("avow", "avow", python_version, "@edgeproc/avow"):
-              raise SystemExit("downloaded artifact identity mismatch")
-          if npm_version != expected_npm or os.environ["RELEASE_TAG"] != f"v{npm_version}":
-              raise SystemExit("downloaded artifact version mismatch")
-          PY
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+  preflight-npm:
+    name: Check npm release state
+    needs: [build]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read # Download the reviewed release artifact.
+      contents: read # Checkout the unprivileged registry guard.
+    outputs:
+      publish: ${{ steps.registry.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          node-version: "24"
-          package-manager-cache: false
-      - name: Require an OIDC-capable npm client
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: avow-release-${{ github.sha }}
+          path: release
+      - name: Check existing npm bytes and provenance
+        id: registry
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          node - <<'JS'
-          const version = process.versions.node.split(".").map(Number);
-          const npm = require("child_process").execFileSync("npm", ["--version"], { encoding: "utf8" })
-            .trim().split(".").map(Number);
-          if (version[0] < 22 || (version[0] === 22 && version[1] < 14)) process.exit(1);
-          if (npm[0] < 11 || (npm[0] === 11 && npm[1] < 5)) process.exit(1);
-          JS
-      - name: Publish Python artifacts through PyPI OIDC
+          set -euo pipefail
+          (cd release && sha256sum --check SHA256SUMS)
+          VERSION="${RELEASE_TAG#v}"
+          python3 -m scripts.registry_release_guard npm release/npm "$VERSION" "$GITHUB_OUTPUT"
+
+  publish-python:
+    name: Publish missing PyPI release through OIDC
+    needs: [build, preflight-python, preflight-npm]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read # Download the reviewed Python artifacts.
+      id-token: write # Request a short-lived PyPI publishing identity.
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: avow-release-${{ github.sha }}
+          path: release
+      - name: Publish Python artifacts
+        if: needs.preflight-python.outputs.publish == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           packages-dir: release/python/
           attestations: true
           print-hash: true
-      - name: Publish npm artifact through npm OIDC
-        run: npm publish release/npm/*.tgz --access public --provenance
 
-  verify-published:
-    name: Verify registry bytes
-    needs: [publish]
+  publish-npm:
+    name: Publish missing npm release through OIDC
+    needs: [build, preflight-python, preflight-npm]
     runs-on: ubuntu-24.04
     permissions:
-      actions: read # Download the reviewed bytes for registry comparison.
-      contents: read
+      actions: read # Download the reviewed npm artifact.
+      id-token: write # Request a short-lived npm publishing identity.
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: avow-release-${{ github.sha }}
           path: release
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        if: needs.preflight-npm.outputs.publish == 'true'
         with:
-          node-version: "24"
+          node-version: "24.15.0"
           package-manager-cache: false
-      - name: Verify PyPI and npm serve the reviewed bytes
+      - name: Pin an OIDC-capable npm client
+        if: needs.preflight-npm.outputs.publish == 'true'
+        run: npm install --global npm@12.0.2 # zizmor: ignore[adhoc-packages]
+      - name: Publish npm artifact
+        if: needs.preflight-npm.outputs.publish == 'true'
+        run: npm publish release/npm/*.tgz --access public --provenance
+
+  verify-published:
+    name: Verify registry bytes
+    needs: [publish-python, publish-npm]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read # Download the reviewed bytes for registry comparison.
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: avow-release-${{ github.sha }}
+          path: release
+      - name: Verify registries serve the reviewed bytes and provenance
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           PYTHON_VERSION="${VERSION/-dev./.dev}"
-          export VERSION PYTHON_VERSION
           for attempt in $(seq 1 60); do
-            if python3 - <<'PY' && \
-              test "$(npm view @edgeproc/avow@"$VERSION" version)" = "$VERSION" && \
-              test "$(npm view @edgeproc/avow@"$VERSION" dist.shasum)" = "$(shasum -a 1 release/npm/*.tgz | awk '{print $1}')"; then
-          import hashlib
-          import json
-          import os
-          import urllib.request
-          from pathlib import Path
-
-          version = os.environ["PYTHON_VERSION"]
-          url = f"https://pypi.org/pypi/avow/{version}/json"
-          with urllib.request.urlopen(url, timeout=15) as response:
-              payload = json.load(response)
-          published = {item["filename"]: item["digests"]["sha256"] for item in payload["urls"]}
-          expected = {
-              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-              for path in Path("release/python").iterdir()
-          }
-          if published != expected:
-              raise SystemExit("PyPI artifact digest mismatch")
-          PY
+            : > /tmp/pypi-state
+            : > /tmp/npm-state
+            if python3 -m scripts.registry_release_guard \
+                pypi release/python "$PYTHON_VERSION" /tmp/pypi-state && \
+              python3 -m scripts.registry_release_guard \
+                npm release/npm "$VERSION" /tmp/npm-state && \
+              grep -qx 'publish=false' /tmp/pypi-state && \
+              grep -qx 'publish=false' /tmp/npm-state; then
               echo "verified registry bytes for avow ${PYTHON_VERSION} and @edgeproc/avow ${VERSION}"
               exit 0
             fi

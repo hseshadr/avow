@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import importlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 from pathlib import Path
 from typing import cast
 
+import pytest
 import yaml
 
 _WORKFLOW_DIR = Path(".github/workflows")
@@ -157,8 +161,11 @@ def test_should_isolate_oidc_write_in_the_minimal_publish_job() -> None:
             for scope, access in _permissions(_mapping(value).get("permissions")).items():
                 if access == "write":
                     writers.append((name, job_name, scope))
-    # Then only the publish job can mint an OIDC identity
-    assert writers == [("publish.yml", "publish", "id-token")]
+    # Then only the independent registry publishers can mint OIDC identities
+    assert writers == [
+        ("publish.yml", "publish-python", "id-token"),
+        ("publish.yml", "publish-npm", "id-token"),
+    ]
 
 
 def test_should_keep_default_and_build_permissions_least_privileged() -> None:
@@ -248,6 +255,20 @@ def test_should_generate_sorted_digests_without_gnu_coreutils(tmp_path: Path) ->
     assert tuple(manifest) == _expected_digest_lines(artifacts)
 
 
+def test_should_build_a_small_runtime_only_python_sdist(tmp_path: Path) -> None:
+    # Given a release build after the TypeScript dependency and coverage gates
+    artifacts = _build_release_fixture(tmp_path)
+    sdist = next((artifacts / "python").glob("*.tar.gz"))
+    # When the source archive membership is inspected
+    with tarfile.open(sdist, "r:gz") as archive:
+        paths = tuple(Path(member.name).parts[1:] for member in archive.getmembers())
+    roots = {parts[0] for parts in paths if parts}
+    # Then only the Python runtime and its packaging metadata are shipped
+    assert sdist.stat().st_size < 1_000_000
+    assert roots <= {".gitignore", "LICENSE", "PKG-INFO", "README.md", "pyproject.toml", "src"}
+    assert ("src", "avow", "envelope.py") in paths
+
+
 def test_should_scan_full_history_and_audit_locked_dependencies() -> None:
     # Given the scheduled security workflow
     workflow = _workflow("security-audit.yml")
@@ -276,16 +297,93 @@ def test_should_trigger_publication_only_for_version_tags_without_tokens() -> No
 
 
 def test_should_recheck_digest_metadata_and_registries_after_publish() -> None:
-    # Given the minimal publish job and unprivileged post-publish verifier
+    # Given independent registry lanes and an unprivileged post-publish verifier
     workflow = _workflow("publish.yml")
-    publish = _commands(_job(workflow, "publish"))
+    python_lane = _commands(_job(workflow, "preflight-python"))
+    npm_lane = _commands(_job(workflow, "preflight-npm"))
     registry = _commands(_job(workflow, "verify-published"))
-    # Then downloaded bytes and metadata are rechecked before both registries
-    assert "sha256sum --check SHA256SUMS" in publish
-    names = {step.get("name") for step in _steps(_job(workflow, "publish"))}
-    assert "Verify downloaded artifact metadata" in names
-    assert "pypi.org/pypi/avow" in registry
-    assert 'npm view @edgeproc/avow@"$VERSION" version' in registry
+    # Then each lane safely skips only byte-identical existing artifacts
+    assert "scripts.registry_release_guard pypi" in python_lane
+    assert "scripts.registry_release_guard npm" in npm_lane
+    assert "needs.preflight-python.outputs.publish == 'true'" in str(
+        _job(workflow, "publish-python")
+    )
+    assert "needs.preflight-npm.outputs.publish == 'true'" in str(_job(workflow, "publish-npm"))
+    preflights = {"preflight-python", "preflight-npm"}
+    assert preflights <= set(_job(workflow, "publish-python")["needs"])
+    assert preflights <= set(_job(workflow, "publish-npm")["needs"])
+    assert _job(workflow, "verify-published")["needs"] == ["publish-python", "publish-npm"]
+    assert "scripts.registry_release_guard" in registry
+    assert "pypi release/python" in registry and "npm release/npm" in registry
+    assert registry.count("publish=false") == 2
+
+
+def test_should_skip_only_identical_provenanced_registry_artifacts(tmp_path: Path) -> None:
+    # Given missing, identical, and mismatched registry states
+    sys.path.insert(0, str(Path.cwd()))
+    try:
+        guard = importlib.import_module("scripts.registry_release_guard")
+    finally:
+        sys.path.pop(0)
+    python = tmp_path / "python"
+    python.mkdir()
+    files = (python / "avow.whl", python / "avow.tar.gz")
+    for index, path in enumerate(files):
+        path.write_bytes(f"python-{index}".encode())
+    urls = [
+        {
+            "filename": path.name,
+            "digests": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+        }
+        for path in files
+    ]
+    npm = tmp_path / "avow.tgz"
+    npm.write_bytes(b"npm")
+    integrity = base64.b64encode(hashlib.sha512(npm.read_bytes()).digest()).decode()
+    npm_payload = {
+        "dist": {
+            "shasum": hashlib.sha1(npm.read_bytes(), usedforsecurity=False).hexdigest(),
+            "integrity": f"sha512-{integrity}",
+            "attestations": {
+                "url": "https://registry.npmjs.org/-/npm/v1/attestations/example",
+                "provenance": {"predicateType": "https://slsa.dev/provenance/v1"},
+            },
+        }
+    }
+    # Then missing versions publish, identical provenanced versions skip, and drift fails closed
+    assert guard.pypi_release_state(python, None, set()) is True
+    assert guard.pypi_release_state(python, {"urls": urls}, {path.name for path in files}) is False
+    attestation = {"attestations": [{}]}
+    pypi_attestation = {"attestation_bundles": [{}]}
+    assert guard.provenance_payload_valid(attestation) is True
+    assert guard.provenance_payload_valid(pypi_attestation) is True
+    assert guard.npm_release_state(npm, None, None) is True
+    assert guard.npm_release_state(npm, npm_payload, attestation) is False
+    with pytest.raises(ValueError, match="PyPI artifact or provenance mismatch"):
+        guard.pypi_release_state(python, {"urls": urls}, set())
+    with pytest.raises(ValueError, match="npm artifact or provenance mismatch"):
+        guard.npm_release_state(npm, {"dist": {}}, None)
+    untrusted = json.loads(json.dumps(npm_payload))
+    untrusted["dist"]["attestations"]["url"] = "https://example.invalid/attestations"
+    with pytest.raises(ValueError, match="npm artifact or provenance mismatch"):
+        guard.npm_release_state(npm, untrusted, attestation)
+
+
+def test_should_run_python_benchmark_in_the_complete_release_gate() -> None:
+    # Given the local gate used unchanged by the hosted release build
+    commands = Path("scripts/verify_release_candidate.sh").read_text(encoding="utf-8")
+    # Then Python performance evidence cannot disappear from a release candidate
+    assert "uv run python -m benchmarks.release" in commands
+
+
+def test_should_pin_supported_npm_only_in_the_npm_publish_lane() -> None:
+    # Given npm trusted publishing requires a known OIDC-capable client
+    workflow = _workflow("publish.yml")
+    source = (_WORKFLOW_DIR / "publish.yml").read_text(encoding="utf-8")
+    npm_lane = _commands(_job(workflow, "publish-npm"))
+    # Then the current supported client is exact and confined to that lane
+    assert "npm install --global npm@12.0.2" in npm_lane
+    assert source.count("npm@12.0.2") == 1
 
 
 def test_should_fail_closed_until_python_and_npm_versions_align(tmp_path: Path) -> None:

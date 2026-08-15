@@ -32,4 +32,7 @@ being presented more than once. Private signing keys remain the operator's respo
 
 Release workflows use short-lived PyPI and npm OIDC identities. They do not accept stored
 registry write tokens. Eligibility, tests, dependency and secret scans, artifact builds,
-and clean-install checks run before the job that can request an OIDC identity.
+and clean-install checks run before either minimal publishing job can request an OIDC
+identity. Each registry is checked independently: an absent release is published, an
+identical release with provenance is safely skipped, and any existing mismatch stops the
+workflow.

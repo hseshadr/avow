@@ -134,6 +134,16 @@ def _write_digest_manifest(root: Path, artifacts: Artifacts) -> None:
     (root / "SHA256SUMS").write_text(content, encoding="utf-8")
 
 
+def verify_release_bundle(root: Path) -> tuple[Identity, Identity]:
+    """Recheck downloaded artifact metadata and its reviewed SHA-256 manifest."""
+    artifacts = _artifacts(root)
+    identities = _validate_metadata(artifacts)
+    actual = tuple((root / "SHA256SUMS").read_text(encoding="utf-8").splitlines())
+    if actual != _digest_lines(root, artifacts):
+        raise ValueError("release artifact digest mismatch")
+    return identities
+
+
 def _run(arguments: list[str | Path], *, cwd: Path | None = None) -> None:
     # Arguments are fixed commands plus path values and never enter a shell.
     subprocess.run(arguments, cwd=cwd, check=True, capture_output=True, text=True)  # noqa: S603

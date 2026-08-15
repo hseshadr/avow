@@ -37,6 +37,15 @@ path = "src/avow/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/avow"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+  "/LICENSE",
+  "/README.md",
+  "/pyproject.toml",
+  "/src/avow",
+]
+exclude = ["/ts/coverage", "/ts/node_modules"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py313"
