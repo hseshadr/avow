@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import subprocess
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -16,12 +17,25 @@ from avow.errors import LedgerHeadWriteFailed
 from avow.ledger import EMPTY_HEAD, save_head
 
 _SENTINEL = "harish.private@example.invalid"
+_TYPER_FLOOR = "typer==0.16.0"
 _RUNNER = CliRunner()
 
 
 @pytest.fixture(scope="module")
 def installed_avow(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return _build_and_install(tmp_path_factory.mktemp("private-installed-avow"))
+    requirement = f"typer=={version('typer')}"
+    return _build_and_install(tmp_path_factory.mktemp("private-installed-avow"), requirement)
+
+
+@pytest.fixture(scope="module")
+def floor_avow(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("typer-floor-installed-avow")
+    return _build_and_install(path, _TYPER_FLOOR)
+
+
+@pytest.fixture(params=("installed_avow", "floor_avow"))
+def supported_avow(request: pytest.FixtureRequest) -> Path:
+    return request.getfixturevalue(request.param)
 
 
 def _run(command: Path, cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -72,6 +86,14 @@ def _invoke_failed_head_install(monkeypatch: pytest.MonkeyPatch) -> tuple[object
     return result, Path("evidence.jsonl").read_bytes()
 
 
+def test_should_import_with_supported_typer_floor(floor_avow: Path, tmp_path: Path) -> None:
+    # Given the wheel installed with its declared Typer lower bound
+    # When Python imports the console adapter in that clean environment
+    result = _run(floor_avow.parent / "python", tmp_path, "-c", "import avow.cli")
+    # Then the supported dependency floor imports without private-module failures
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -80,12 +102,12 @@ def _invoke_failed_head_install(monkeypatch: pytest.MonkeyPatch) -> tuple[object
         ("sign", "--payload", _SENTINEL, "--key"),
     ],
 )
-def test_should_redact_parser_failures_from_installed_command(
-    installed_avow: Path, tmp_path: Path, arguments: tuple[str, ...]
+def test_should_redact_parser_failures_from_supported_installed_command(
+    supported_avow: Path, tmp_path: Path, arguments: tuple[str, ...]
 ) -> None:
     # Given a malformed command line carrying a private sentinel
-    # When the clean-installed console script parses it
-    result = _run(installed_avow, tmp_path, *arguments)
+    # When each supported clean-installed console script parses it
+    result = _run(supported_avow, tmp_path, *arguments)
     # Then only one stable code is rendered, without usage or private arguments
     _assert_error(result, "avow.command.invalid")
     assert "Usage" not in result.stderr

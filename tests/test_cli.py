@@ -4,13 +4,14 @@ import json
 import subprocess
 import sys
 import zipfile
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from avow.canonical import JsonValue
-from avow.cli import app
+from avow.cli import app, main
 
 type Command = tuple[tuple[str, ...], str]
 
@@ -90,16 +91,19 @@ def _install_wheel(python: Path, wheel: Path) -> None:
     _run_checked(["uv", "pip", "install", "--python", str(python), str(wheel)])
 
 
-def _build_and_install(tmp_path: Path) -> Path:
+def _build_and_install(tmp_path: Path, typer_requirement: str | None = None) -> Path:
     wheel = _build_wheel(tmp_path / "wheel")
     python = _create_environment(tmp_path / "environment")
+    if typer_requirement is not None:
+        _run_checked(["uv", "pip", "install", "--python", str(python), typer_requirement])
     _install_wheel(python, wheel)
     return python.parent / "avow"
 
 
 @pytest.fixture(scope="module")
 def installed_avow(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return _build_and_install(tmp_path_factory.mktemp("installed-avow"))
+    requirement = f"typer=={version('typer')}"
+    return _build_and_install(tmp_path_factory.mktemp("installed-avow"), requirement)
 
 
 def _run(command: Path, cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -187,6 +191,17 @@ def test_should_translate_expected_boundary_failures_without_details(
     _exercise_boundary_errors()
     # Then domain failures also remain stable codes without exception text
     assert not Path("out").exists()
+
+
+def test_should_preserve_unexpected_console_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given an unexpected implementation failure behind the command boundary
+    failure = RuntimeError("implementation defect")
+    monkeypatch.setattr("avow.cli.app", lambda **kwargs: (_ for _ in ()).throw(failure))
+    # When the console wrapper encounters that non-parser exception
+    with pytest.raises(RuntimeError) as caught:
+        main()
+    # Then it preserves the defect rather than misclassifying it as private input
+    assert caught.value is failure
 
 
 @pytest.mark.parametrize(

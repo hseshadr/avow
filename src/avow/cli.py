@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Final
+from typing import Annotated, Final, Protocol, runtime_checkable
 
 import typer
 from nacl.signing import VerifyKey
 from pydantic import TypeAdapter, ValidationError
-from typer._click.exceptions import ClickException
 
 from avow._atomic import atomic_write_bytes
 from avow.canonical import JsonValue, canonical_bytes
@@ -38,6 +37,15 @@ _ERROR_STATUS: Final[tuple[tuple[type[BaseException], str, int], ...]] = (
 _PAYLOAD_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
+@runtime_checkable
+class _ParserFailure(Protocol):
+    """Cross-version public behavior shared by Click parser failures."""
+
+    exit_code: int
+
+    def format_message(self) -> str: ...
+
+
 class JsonReceipt(SignedReceipt[JsonValue]):
     """Concrete generic receipt model for opaque CLI JSON objects."""
 
@@ -61,10 +69,17 @@ def main() -> int:
     """Run Typer without automatic exception rendering at the privacy boundary."""
     try:
         result: object = app(standalone_mode=False)
-    except ClickException:
-        typer.echo(_PARSE_ERROR, err=True)
-        return _ERROR_EXIT
+    except Exception as exc:
+        return _parser_failure_status(exc)
     return result if isinstance(result, int) else 0
+
+
+def _parser_failure_status(error: Exception) -> int:
+    """Redact parser usage failures and preserve unexpected exceptions."""
+    if not isinstance(error, _ParserFailure) or error.exit_code != _ERROR_EXIT:
+        raise error
+    typer.echo(_PARSE_ERROR, err=True)
+    return _ERROR_EXIT
 
 
 def _fail(code: str, exit_code: int = _ERROR_EXIT) -> None:
