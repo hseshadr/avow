@@ -197,6 +197,19 @@ def test_should_keep_release_tooling_out_of_end_user_first_run() -> None:
     assert "uv run poe release-candidate" in release
 
 
+def test_should_probe_the_direct_pinned_pnpm_used_by_release_scripts() -> None:
+    # Given the maintainer prerequisites and the release scripts
+    release = _readme().partition("## Maintainer release gate")[2]
+    scripts = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in ("scripts/build_release_artifacts.sh", "scripts/verify_release_candidate.sh")
+    )
+    # Then the documented probe exercises the same direct pnpm command as automation
+    assert "pnpm --version" in release
+    assert "corepack pnpm --version" not in release
+    assert "corepack pnpm" not in scripts
+
+
 def test_should_resolve_every_readme_local_link() -> None:
     # Given every local destination exposed by the README
     links = _local_links(_readme())

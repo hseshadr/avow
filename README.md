@@ -120,7 +120,7 @@ actionlint, gitleaks, and ShellCheck. Corepack selects the pinned pnpm version f
 
 ```bash
 node --version
-corepack pnpm --version
+pnpm --version
 uv run poe release-candidate
 ```
 

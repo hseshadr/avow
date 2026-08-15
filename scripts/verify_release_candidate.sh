@@ -9,13 +9,13 @@ if [[ "${node_major}" != "22" ]]; then
   exit 1
 fi
 uv sync --frozen --all-groups
-corepack pnpm --dir ts install --frozen-lockfile --ignore-scripts
+pnpm --dir ts install --frozen-lockfile --ignore-scripts
 
 uv run poe gate
 uv run python -m benchmarks.release
-corepack pnpm --dir ts gate
+pnpm --dir ts gate
 uv run pytest tests/test_vectors.py -q
-corepack pnpm --dir ts exec vitest run src/canonical.test.ts src/receipt.test.ts
+pnpm --dir ts exec vitest run src/canonical.test.ts src/receipt.test.ts
 bash examples/run_evidence_loop.sh
 
 uv run poe workflow-lint

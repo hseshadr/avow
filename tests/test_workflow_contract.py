@@ -6,6 +6,7 @@ import importlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -100,14 +101,38 @@ def _wrong_node_environment(tmp_path: Path) -> dict[str, str]:
     return dict(os.environ) | {"PATH": f"{tmp_path}:/usr/bin:/bin"}
 
 
+def _expose_command(tools: Path, command: str, source: dict[str, str]) -> None:
+    executable = shutil.which(command, path=source["PATH"])
+    assert executable is not None
+    target = tools / command
+    target.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(executable)} "$@"\n',
+        encoding="utf-8",
+    )
+    target.chmod(0o755)
+
+
 def _without_coreutils_environment(tmp_path: Path) -> dict[str, str]:
     source = _node_environment()
     tools = tmp_path / "tools"
     tools.mkdir()
-    for command in ("corepack", "node", "npm", "uv"):
-        executable = shutil.which(command, path=source["PATH"])
-        assert executable is not None
-        (tools / command).symlink_to(Path(executable).resolve())
+    for command in ("node", "npm", "pnpm", "uv"):
+        _expose_command(tools, command, source)
+    return source | {"PATH": f"{tools}:/usr/bin:/bin"}
+
+
+def _workflow_pnpm_environment(tmp_path: Path) -> dict[str, str]:
+    source = _node_environment()
+    tools = tmp_path / "workflow-tools"
+    tools.mkdir()
+    for command in ("node", "npm", "pnpm", "uv"):
+        _expose_command(tools, command, source)
+    corepack = tools / "corepack"
+    corepack.write_text(
+        "#!/bin/sh\necho unexpected Corepack invocation >&2\nexit 86\n",
+        encoding="utf-8",
+    )
+    corepack.chmod(0o755)
     return source | {"PATH": f"{tools}:/usr/bin:/bin"}
 
 
@@ -194,6 +219,16 @@ def test_should_generate_exact_commit_language_parity_and_example_evidence() -> 
     assert _mapping(_steps(_job(workflow, "typescript"))[1]["with"])["node-version"] == "22"
 
 
+def test_should_provision_node_and_pnpm_for_the_cross_runtime_python_gate() -> None:
+    # Given the Python job runs documentation and artifact contract tests
+    steps = _steps(_job(_workflow("ci.yml"), "python"))
+    actions = {str(step.get("uses", "")).partition("@")[0]: step for step in steps}
+    # Then the hosted job provides the exact cross-runtime tools those tests execute
+    assert {"actions/setup-node", "pnpm/action-setup"} <= actions.keys()
+    assert _mapping(actions["actions/setup-node"]["with"])["node-version"] == "22"
+    assert _mapping(actions["pnpm/action-setup"]["with"])["version"] == "11.5.0"
+
+
 def test_should_build_and_clean_install_every_release_artifact() -> None:
     # Given the CI artifact job and unprivileged release build
     ci_artifacts = _commands(_job(_workflow("ci.yml"), "artifacts"))
@@ -253,6 +288,54 @@ def test_should_generate_sorted_digests_without_gnu_coreutils(tmp_path: Path) ->
     # Then Python generates a correct deterministic manifest without Coreutils
     manifest = (artifacts / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
     assert tuple(manifest) == _expected_digest_lines(artifacts)
+
+
+def test_should_build_with_workflow_pinned_pnpm_without_invoking_corepack(tmp_path: Path) -> None:
+    # Given a hosted-style PATH with pinned pnpm and a conflicting Corepack client
+    environment = _workflow_pnpm_environment(tmp_path)
+    # When the real release builder creates and clean-installs every package
+    artifacts = _build_release_fixture(tmp_path, environment=environment)
+    # Then it succeeds through the workflow-pinned pnpm executable
+    assert len(tuple((artifacts / "python").glob("*.whl"))) == 1
+    assert len(tuple((artifacts / "python").glob("*.tar.gz"))) == 1
+    assert len(tuple((artifacts / "npm").glob("*.tgz"))) == 1
+
+
+def test_should_preserve_a_self_relative_hosted_pnpm_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given a hosted pnpm shim that locates its module relative to its invoked path
+    host = tmp_path / "host"
+    module = host / "global/v11/test/node_modules/pnpm/bin/pnpm.mjs"
+    module.parent.mkdir(parents=True)
+    module.write_text("#!/bin/sh\necho 11.5.0\n", encoding="utf-8")
+    module.chmod(0o755)
+    binaries = host / "bin"
+    binaries.mkdir()
+    for command in ("node", "npm", "uv"):
+        binary = binaries / command
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+    pnpm = binaries / "pnpm"
+    pnpm.write_text(
+        '#!/bin/sh\nexec "$(dirname "$0")/../global/v11/test/'
+        'node_modules/pnpm/bin/pnpm.mjs" "$@"\n',
+        encoding="utf-8",
+    )
+    pnpm.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(binaries))
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    # When the restricted test PATH exposes that launcher
+    environment = _workflow_pnpm_environment(isolated)
+    result = subprocess.run(
+        ["pnpm", "--version"], check=False, capture_output=True, text=True, env=environment
+    )
+    # Then pnpm still resolves its real adjacent module rather than the temporary PATH
+    assert (result.returncode, result.stdout) == (0, "11.5.0\n")
 
 
 def test_should_build_a_small_runtime_only_python_sdist(tmp_path: Path) -> None:

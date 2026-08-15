@@ -82,7 +82,7 @@ workflow-lint = "actionlint"
 workflow-security = "uvx zizmor==1.29.0 --persona=auditor --min-severity=low --offline --strict-collection .github"
 secrets = { shell = "gitleaks git --redact --no-banner --log-opts=--all . && gitleaks dir --redact --no-banner ." }
 audit-python = { shell = "uv export --frozen --all-groups --no-emit-project --format requirements.txt --output-file /tmp/avow-audit-requirements.txt >/dev/null && uvx --from pip-audit==2.10.1 pip-audit --requirement /tmp/avow-audit-requirements.txt --require-hashes --strict --disable-pip --progress-spinner off" }
-audit-typescript = { shell = "corepack pnpm --dir ts install --frozen-lockfile --ignore-scripts && corepack pnpm --dir ts audit --audit-level high" }
+audit-typescript = { shell = "pnpm --dir ts install --frozen-lockfile --ignore-scripts && pnpm --dir ts audit --audit-level high" }
 audit = ["audit-python", "audit-typescript"]
 artifacts = "bash scripts/build_release_artifacts.sh dist/release"
 release-candidate = "bash scripts/verify_release_candidate.sh"
