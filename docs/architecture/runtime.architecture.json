@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Avow Trust Kernel Architecture",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/hseshadr/avow",
+      "revision": "9a2bb79756ad466952ac229b1715edf4ceaa4005"
+    },
+    "viewBox": [1360, 700],
+    "views": [
+      {
+        "id": "receipt-path",
+        "label": "Receipt trust path",
+        "focus": ["evidence", "canonicalizer", "signer", "receipt", "verifier"],
+        "note": "Follow opaque JSON through canonicalization, deterministic sealing, and offline verification."
+      },
+      {
+        "id": "key-custody",
+        "label": "Key custody",
+        "focus": ["key-material", "signer", "receipt", "verifier"],
+        "note": "The private seed signs locally; the verifier trusts a separately pinned public key."
+      },
+      {
+        "id": "ledger-proof",
+        "label": "Ordered ledger proof",
+        "focus": ["receipt", "ledger", "verifier"],
+        "note": "The optional Python ledger links verified receipts to an externally pinned chain head."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "evidence",
+      "type": "external",
+      "label": "Application Evidence",
+      "sublabel": "opaque JSON subject",
+      "pos": [30, 300],
+      "size": [150, 76],
+      "sources": [
+        {"path": "README.md", "line": 66, "end_line": 75, "label": "Evidence loop"}
+      ]
+    },
+    {
+      "id": "package-api",
+      "type": "frontend",
+      "label": "Package + CLI Surfaces",
+      "sublabel": "Python wheel · npm tarball",
+      "tag": "local only",
+      "pos": [30, 80],
+      "size": [170, 78],
+      "sources": [
+        {"path": "README.md", "line": 48, "end_line": 64, "label": "Artifact boundaries"},
+        {"path": "src/avow/cli.py", "line": 60, "end_line": 91, "label": "CLI boundary"},
+        {"path": "ts/src/index.ts", "line": 1, "end_line": 19, "label": "TypeScript exports"}
+      ]
+    },
+    {
+      "id": "canonicalizer",
+      "type": "backend",
+      "label": "Canonical JSON",
+      "sublabel": "RFC 8785 JCS + SHA-256",
+      "tag": "byte-stable",
+      "pos": [280, 300],
+      "size": [170, 78],
+      "sources": [
+        {"path": "src/avow/canonical.py", "line": 73, "end_line": 86, "label": "Canonical bytes and hash"}
+      ]
+    },
+    {
+      "id": "signer",
+      "type": "security",
+      "label": "Ed25519 Sealer",
+      "sublabel": "hash + detached signature",
+      "tag": "subject-agnostic",
+      "pos": [560, 300],
+      "size": [170, 80],
+      "sources": [
+        {"path": "src/avow/envelope.py", "line": 107, "end_line": 139, "label": "Seal snapshot"},
+        {"path": "ts/src/receipt.ts", "line": 43, "end_line": 58, "label": "TypeScript signer"}
+      ]
+    },
+    {
+      "id": "key-material",
+      "type": "security",
+      "label": "Ed25519 Key Pair",
+      "sublabel": "private seed + public pin",
+      "tag": "0600 private file",
+      "pos": [560, 80],
+      "size": [170, 78],
+      "sources": [
+        {"path": "src/avow/keys.py", "line": 17, "end_line": 45, "label": "Key custody"},
+        {"path": "src/avow/keys.py", "line": 102, "end_line": 123, "label": "No-overwrite pair"}
+      ]
+    },
+    {
+      "id": "receipt",
+      "type": "database",
+      "label": "SignedReceipt",
+      "sublabel": "payload · hash · signature",
+      "tag": "avow.receipt/v1",
+      "pos": [840, 300],
+      "size": [170, 80],
+      "sources": [
+        {"path": "src/avow/envelope.py", "line": 42, "end_line": 64, "label": "Receipt envelope"},
+        {"path": "ts/src/receipt.ts", "line": 31, "end_line": 41, "label": "Portable envelope"}
+      ]
+    },
+    {
+      "id": "verifier",
+      "type": "security",
+      "label": "Offline Verifier",
+      "sublabel": "schema · hash · signer · bytes",
+      "tag": "caller-pinned key",
+      "pos": [1120, 300],
+      "size": [180, 80],
+      "sources": [
+        {"path": "src/avow/envelope.py", "line": 142, "end_line": 180, "label": "Verification order"},
+        {"path": "src/avow/verify.py", "line": 14, "end_line": 24, "label": "Offline API"},
+        {"path": "ts/src/receipt.ts", "line": 104, "end_line": 130, "label": "TypeScript verifier"}
+      ]
+    },
+    {
+      "id": "ledger",
+      "type": "database",
+      "label": "Append-only Ledger",
+      "sublabel": "linked entries + pinned head",
+      "tag": "Python only",
+      "pos": [840, 510],
+      "size": [180, 80],
+      "sources": [
+        {"path": "src/avow/ledger.py", "line": 102, "end_line": 133, "label": "Linked entry"},
+        {"path": "src/avow/ledger.py", "line": 265, "end_line": 275, "label": "Bounded append"},
+        {"path": "src/avow/ledger.py", "line": 398, "end_line": 427, "label": "Pinned verification"}
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Offline trust kernel",
+      "wraps": ["canonicalizer", "signer", "key-material", "receipt", "verifier", "ledger"]
+    }
+  ],
+  "connections": [
+    {"id": "surface-evidence", "from": "package-api", "to": "evidence", "label": "sign / verify", "variant": "dashed", "fromSide": "bottom", "toSide": "top"},
+    {"id": "evidence-canonical", "from": "evidence", "to": "canonicalizer", "label": "JSON subject", "variant": "emphasis"},
+    {"id": "canonical-signer", "from": "canonicalizer", "to": "signer", "label": "JCS bytes"},
+    {"id": "keys-signer", "from": "key-material", "to": "signer", "label": "private seed", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelAt": [645, 172]},
+    {"id": "signer-receipt", "from": "signer", "to": "receipt", "label": "signature", "variant": "security"},
+    {"id": "receipt-verifier", "from": "receipt", "to": "verifier", "label": "offline check", "variant": "emphasis"},
+    {"id": "receipt-ledger", "from": "receipt", "to": "ledger", "label": "optional append", "variant": "dashed", "fromSide": "bottom", "toSide": "top"}
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Portable proof",
+      "items": [
+        "Python and TypeScript share canonicalization and receipt semantics",
+        "A receipt remains independently verifiable without a service or database"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Pinned trust",
+      "items": [
+        "Verification recomputes the hash before checking signer identity and signature bytes",
+        "The embedded public key is never accepted as its own trust anchor"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Explicit limits",
+      "items": [
+        "Signing proves who signed unchanged bytes, not truth, freshness, or fairness",
+        "Replay defense requires caller state or the optional Python ledger"
+      ]
+    }
+  ]
+}
