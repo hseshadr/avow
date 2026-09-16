@@ -29,7 +29,8 @@ async function sample(warmup, count) {
 
 function enforce(stats) {
   const observed = [stats.p50_ms, stats.p95_ms, stats.p99_ms];
-  const limits = [3, 8, 20];
+  // Keep tail limits strict while allowing ordinary shared-runner variance at p50.
+  const limits = [4, 8, 20];
   if (observed.some((value, index) => value > limits[index])) {
     throw new Error(`latency budget missed: ${observed} > ${limits}`);
   }

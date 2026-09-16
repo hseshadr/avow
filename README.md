@@ -47,6 +47,8 @@ instead. To prove that packaged path, build and install the wheel as shown in th
 
 ## Architecture
 
+Explore the [interactive runtime map](docs/architecture/index.html).
+
 Avow has two production package surfaces and no hidden third core:
 
 ```text
