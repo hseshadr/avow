@@ -1,17 +1,22 @@
 """Ed25519 signing-key custody. The private key is a 32-byte seed written to a
 0600 file; it is never logged and never committed (``*.key`` is gitignored). The
-public verify key is recovered from the seed and travels inside each receipt."""
+seed is not encrypted: owner-only file permissions are its only protection, so on
+POSIX systems loading refuses a key file that group or other can access. The public
+verify key is recovered from the seed and travels inside each receipt."""
 
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 from nacl.signing import SigningKey
 
 from avow._atomic import atomic_write_bytes, discard_staged, stage_bytes, sync_directory
+from avow.errors import KeyPermissionsInsecure
 
 _SEED_BYTES = 32
+_GROUP_OTHER_BITS = stat.S_IRWXG | stat.S_IRWXO
 
 
 def generate_signing_key() -> SigningKey:
@@ -24,9 +29,22 @@ def save_signing_key(key: SigningKey, *, path: Path) -> None:
     atomic_write_bytes(bytes(key), path=path)
 
 
+def _require_owner_only(mode: int) -> None:
+    """Refuse a POSIX key file that grants any group or other permission bit."""
+    if os.name == "posix" and mode & _GROUP_OTHER_BITS:
+        raise KeyPermissionsInsecure("signing key file must be owner-only (chmod 600)")
+
+
 def load_signing_key(path: Path) -> SigningKey:
-    """Load a signing key from its 32-byte seed file."""
-    seed = path.read_bytes()
+    """Load a signing key from its 32-byte seed file.
+
+    On POSIX systems the file must be owner-only: any group or other permission bit
+    raises :class:`~avow.errors.KeyPermissionsInsecure` before the seed is used. The
+    mode is read from the opened descriptor, so the checked file is the read file.
+    Non-POSIX platforms have no comparable mode bits and skip this check."""
+    with path.open("rb") as handle:
+        _require_owner_only(os.fstat(handle.fileno()).st_mode)
+        seed = handle.read()
     if len(seed) != _SEED_BYTES:
         raise ValueError(f"signing key must be {_SEED_BYTES} bytes, got {len(seed)}")
     return SigningKey(seed)

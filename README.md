@@ -98,6 +98,16 @@ presented again. A neighboring ledger-head file is only a convenience copy, not 
 independent trust anchor. Receipts contain their JSON payload in cleartext; signing is
 not encryption or redaction.
 
+- **Not a replay defence.** A valid receipt verifies identically every time it is
+  presented; Avow keeps no nonce, audience, or expiry state. Callers that need replay
+  protection put those claims inside their own signed payload and check them after
+  verification — see [replay protection is caller-owned](docs/OPERATIONS.md#replay-protection-is-caller-owned).
+- **The signing key is an unencrypted seed.** The private key is a plaintext 32-byte
+  Ed25519 seed protected only by filesystem permissions (owner-only `0600`). On POSIX
+  systems `load_signing_key` refuses a key file that group or other can access, with
+  `avow.key_permissions_insecure`. There is no KMS/HSM seam yet: anyone who can read the
+  file can sign as you. See [key rotation](docs/OPERATIONS.md#key-rotation).
+
 ## Version and publication status
 
 The Python source version is `0.5.0.dev0`; the npm source version is its SemVer spelling,
