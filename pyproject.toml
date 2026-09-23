@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "avow"
 dynamic = ["version"]
-description = "Sign arbitrary JSON evidence and verify it offline."
+description = "Seals a record into a signed receipt anyone can check offline — for teams that must later prove it was not changed."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

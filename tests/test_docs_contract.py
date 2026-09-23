@@ -107,31 +107,40 @@ def _npm_roots(tarball: Path) -> set[str]:
         }
 
 
+def _what_it_does(markdown: str) -> str:
+    line = markdown.partition("- **What it does**")[2].partition("\n- **")[0]
+    return " ".join(line.split())
+
+
 def test_should_open_readme_with_one_clear_product_identity() -> None:
     # Given the root product interface
     markdown = _readme()
-    # When its identity and first explanation are read
+    # When its identity and plain-language explanation are read
     assert re.findall(r"^# .+$", markdown, re.MULTILINE) == ["# Avow"]
-    paragraph = _first_paragraph(markdown).lower()
-    # Then it explains the complete plain-language purpose
-    assert all(term in paragraph for term in ("signed", "tamper-evident", "json", "receipt"))
-    assert "verify offline" in paragraph
+    tagline = _first_paragraph(markdown).lower()
+    summary = _what_it_does(markdown).lower()
+    # Then it explains the complete plain-language purpose without leading jargon
+    assert all(term in tagline for term in ("signed", "receipt", "check offline"))
+    assert all(term in summary for term in ("json", "signed receipt", "no internet"))
 
 
-def test_should_put_short_cold_start_after_tldr_and_before_installation() -> None:
+def test_should_put_one_line_cold_start_before_internals_and_keep_the_evidence_loop() -> None:
     # Given the root product interface
     markdown = _readme()
-    # When its first runnable path is extracted
-    assert markdown.index("## TL;DR") < markdown.index("## Installation")
+    # When its runnable paths are extracted
+    assert markdown.index("## Try it in 60 seconds") < markdown.index("## How it works")
+    assert markdown.index("## How it works") < markdown.index("## Install")
     commands = _first_runnable_block(markdown)
-    # Then a cold reader starts the bounded evidence loop directly
-    assert len(commands) <= 15
-    assert commands[0] == "bash examples/run_evidence_loop.sh"
+    loop = re.findall(r"```bash\n(bash examples/run_evidence_loop\.sh)\n```", markdown)
+    # Then a cold reader starts from one line and the bounded evidence loop stays one line
+    assert commands == ("git clone https://github.com/hseshadr/avow.git && cd avow && uv sync",)
+    assert loop == ["bash examples/run_evidence_loop.sh"]
 
 
 def test_should_explain_prerequisites_and_checkout_command_selection() -> None:
-    # Given the cold-reader path before architecture details
-    opening = " ".join(_readme().partition("## Architecture")[0].lower().split())
+    # Given the install section
+    install = _readme().partition("## Install")[2].partition("\n## ")[0]
+    opening = " ".join(install.lower().split())
     # When prerequisites and command resolution are read
     assert all(term in opening for term in ("bash", "python 3.12", "`uv`"))
     # Then it says this checkout wins over an unrelated installed command
@@ -150,8 +159,8 @@ def test_should_pin_typescript_signer_independently_of_receipt() -> None:
 
 
 def test_should_keep_opening_free_of_other_domain_language() -> None:
-    # Given everything before the architecture boundary
-    opening = _readme().partition("## Architecture")[0]
+    # Given the first screen, everything before the architecture explanation
+    opening = _readme().partition("## How it works")[0]
     # When cross-product vocabulary is checked
     violations = tuple(
         word for word in _FORBIDDEN_OPENING if re.search(rf"\b{word}\b", opening, re.I)
@@ -191,8 +200,9 @@ def test_should_keep_release_tooling_out_of_end_user_first_run() -> None:
     markdown = _readme()
     first_run = "\n".join(_first_runnable_block(markdown))
     release = markdown.partition("## Maintainer release gate")[2]
-    # Then users still get one simple demo while maintainers get exact tool prerequisites
-    assert first_run == "bash examples/run_evidence_loop.sh"
+    # Then users still get one simple start while maintainers get exact tool prerequisites
+    assert first_run == "git clone https://github.com/hseshadr/avow.git && cd avow && uv sync"
+    assert "release-candidate" not in markdown.partition("## How it works")[0]
     assert all(item in release for item in ("Node 22", "Corepack", "pnpm 11.5.0"))
     assert "uv run poe release-candidate" in release
 

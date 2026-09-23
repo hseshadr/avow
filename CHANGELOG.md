@@ -4,6 +4,10 @@ All notable standalone Avow changes will be recorded here.
 
 ## [Unreleased]
 
+- Rewrite the README to the portfolio template: a plain-language first screen, a
+  runnable 60-second example whose real output is the hero, and a
+  `tests/test_readme_contract.py` gate that re-runs that example with network access
+  disabled. The Python and npm package descriptions now equal the README tagline.
 - Extract the opaque JSON receipt and ledger kernel into the standalone `avow` project.
 - Add Python `0.5.0.dev0` and npm `0.5.0-dev.0` local release candidates.
 - Add exact-commit Python, Node 22, parity, mutation, example, artifact, and security gates.
