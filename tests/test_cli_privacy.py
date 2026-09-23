@@ -265,10 +265,25 @@ def test_should_reject_invalid_private_key_without_partial_output(
     # Given a malformed private-key file containing a private sentinel
     (tmp_path / "payload.json").write_text('{"safe":true}\n', encoding="utf-8")
     (tmp_path / "bad.key").write_text(_SENTINEL, encoding="utf-8")
+    (tmp_path / "bad.key").chmod(0o600)
     # When signing attempts to load it
     result = _run_sign(installed_avow, tmp_path, key="bad.key", out="receipt.json")
     # Then the key fails closed without a receipt or disclosed bytes
     _assert_error(result, "avow.key.invalid")
+    assert not (tmp_path / "receipt.json").exists()
+
+
+def test_should_refuse_a_group_readable_private_key_without_partial_output(
+    installed_avow: Path, tmp_path: Path
+) -> None:
+    # Given a group-readable private-key file containing a private sentinel
+    (tmp_path / "payload.json").write_text('{"safe":true}\n', encoding="utf-8")
+    (tmp_path / "loose.key").write_text(_SENTINEL, encoding="utf-8")
+    (tmp_path / "loose.key").chmod(0o640)
+    # When signing attempts to load it
+    result = _run_sign(installed_avow, tmp_path, key="loose.key", out="receipt.json")
+    # Then the mode fails closed with its stable code, no receipt, and no disclosed bytes
+    _assert_error(result, "avow.key_permissions_insecure")
     assert not (tmp_path / "receipt.json").exists()
 
 

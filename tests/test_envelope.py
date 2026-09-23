@@ -15,6 +15,7 @@ from avow.envelope import SignedReceipt, payload_digest, sign_payload, verify_si
 from avow.errors import (
     AvowError,
     CanonicalizationFailed,
+    KeyPermissionsInsecure,
     LedgerConfigurationInvalid,
     LedgerEntryMalformed,
     LedgerHeadUnreadable,
@@ -75,6 +76,7 @@ _AVOW_CODES: tuple[tuple[type[AvowError], str], ...] = (
     (SignatureBytesInvalid, "avow.signature_invalid"),
     (PayloadHashMismatch, "avow.payload_hash_mismatch"),
     (ReceiptSchemaMismatch, "avow.receipt_schema_mismatch"),
+    (KeyPermissionsInsecure, "avow.key_permissions_insecure"),
     (LedgerIntegrityError, "avow.ledger_integrity"),
     (LedgerUnreadable, "avow.ledger_unreadable"),
     (LedgerEntryMalformed, "avow.ledger_entry_malformed"),

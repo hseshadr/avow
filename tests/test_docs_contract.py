@@ -232,3 +232,34 @@ def test_should_map_source_tree_one_to_one_to_real_built_packages(tmp_path: Path
     # Then every source node maps to exactly one real production root
     assert set(claims) == set(actual)
     assert all({claims[key].rstrip("/")} == roots for key, roots in actual.items())
+
+
+def test_should_state_replay_and_key_custody_limits_at_the_boundary() -> None:
+    # Given the README's proof boundary
+    boundary = _readme().partition("## What this does not prove")[2].partition("\n## ")[0]
+    flat = " ".join(boundary.split())
+    # Then replay is explicitly out of scope and points at the caller recipe
+    assert "Not a replay defence" in flat
+    assert "docs/OPERATIONS.md#replay-protection-is-caller-owned" in flat
+    # And key custody is stated plainly: an unencrypted seed guarded by file permissions
+    assert all(term in flat for term in ("unencrypted", "filesystem permissions", "KMS", "HSM"))
+
+
+def test_should_give_operators_replay_and_rotation_recipes() -> None:
+    # Given the operations guide
+    operations = Path("docs/OPERATIONS.md").read_text(encoding="utf-8")
+    flat = " ".join(operations.split())
+    # Then callers get concrete replay and rotation recipes plus the key-mode code
+    assert "## Replay protection is caller-owned" in operations
+    assert all(term in flat for term in ("nonce", "`aud`", "`exp`", "verify_signature"))
+    assert "## Key rotation" in operations
+    assert "avow.key_permissions_insecure" in flat
+
+
+def test_should_keep_typescript_key_custody_and_replay_limits_in_parity() -> None:
+    # Given the TypeScript README, whose seed never touches a file inside Avow
+    flat = " ".join(_TYPESCRIPT_README.read_text(encoding="utf-8").split())
+    # Then it states the same replay and custody boundary as the Python docs
+    assert "Not a replay defence" in flat
+    assert "unencrypted" in flat
+    assert "avow.key_permissions_insecure" in flat

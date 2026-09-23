@@ -164,6 +164,8 @@ def _exercise_boundary_errors() -> None:
     Path("payload.json").write_text("{}", encoding="utf-8")
     _assert_invocation_error(sign, "avow.file.error")
     Path("key").write_bytes(b"bad")
+    _assert_invocation_error(sign, "avow.key_permissions_insecure")
+    Path("key").chmod(0o600)
     _assert_invocation_error(sign, "avow.key.invalid")
     sign[-1] = "payload.json"
     _assert_invocation_error(sign, "avow.ledger_configuration_invalid")

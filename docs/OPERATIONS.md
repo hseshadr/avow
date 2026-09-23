@@ -113,13 +113,64 @@ it, preventing a later caller mutation from changing the receipt.
 ## Key and data handling
 
 - `keygen` refuses to overwrite either the private key or its `.pub` companion.
-- Keep private-key files outside shared evidence directories and apply operating-system
-  permissions appropriate to the signer.
+- The private key is an unencrypted 32-byte Ed25519 seed. Its only protection is the
+  owner-only `0600` mode `keygen` and `save_signing_key` apply; there is no passphrase
+  and no KMS/HSM seam yet.
+- On POSIX systems `load_signing_key` (and therefore `avow sign`) refuses a key file
+  whose mode grants any group or other permission bit, failing closed with
+  `avow.key_permissions_insecure` (exit `2` at the command boundary) before the seed is
+  used. Restore the mode with `chmod 600`; if another account may have read the seed,
+  treat it as compromised and rotate. Non-POSIX platforms have no comparable mode bits,
+  so the check is skipped there and access control is the operator's responsibility.
+  The TypeScript package never reads key files: it takes the seed as caller-held hex, so
+  seed storage there is entirely the integrating application's.
+- Keep private-key files outside shared evidence directories.
 - A signature is authenticity and integrity, not encryption. Minimize payloads before
   signing; hashes of low-entropy personal data can still be linkable personal data.
 - Back up authoritative public keys and ledger heads independently of the ledger.
 - Rotation, revocation, signer authorization, retention, and deletion policy belong to
-  the integrating application; Avow does not infer them.
+  the integrating application; Avow does not infer them (see [key rotation](#key-rotation)).
+
+## Replay protection is caller-owned
+
+Avow is not a replay defence. A receipt carries no nonce, audience, or expiry that Avow
+checks, and a valid receipt verifies identically on every presentation. A caller that
+must reject reuse builds that check on top of the envelope:
+
+1. Put the claims inside the payload you sign, so the signature covers them — for
+   example `{"nonce": "<128-bit random hex>", "aud": "deploy-gate.prod",
+   "exp": "2026-09-23T12:05:00Z", "evidence": {...}}`. Claims kept outside the signed
+   payload can be edited freely.
+2. Call `verify_signature` (or `verifySignature` in TypeScript) against the pinned key
+   first. Only a receipt that verifies has claims worth reading.
+3. Then check the claims yourself: `aud` equals this verifier's identity, `exp` is in
+   the future by your own trusted clock, and `nonce` is absent from your seen-nonce
+   store.
+4. Record the nonce in a durable seen-nonce store, atomically with accepting the
+   receipt, and keep each entry at least until its `exp` passes so the store can be
+   pruned.
+
+Reject the receipt if any step fails. The ledger is not a substitute: its chain detects
+a recorded line copied to another position (`avow.ledger_integrity`), but repeated
+`append` calls with the same receipt are the caller's to refuse.
+
+## Key rotation
+
+Avow has no rotation or revocation mechanism; this is the recipe it supports:
+
+1. Generate a new pair with `avow keygen --out <new>.key` and distribute
+   `<new>.key.pub` through your trusted channel.
+2. During the overlap window, pin both public keys: verify each receipt against the new
+   key first and, if that fails with `avow.signer_mismatch`, against the old key. Accept
+   the receipt only if one of them verifies. Remove the old pin when the window closes.
+3. Keep one ledger per signing key. `verify_ledger` pins exactly one expected signer, so
+   start a new ledger (and a new out-of-band head pin) for the new key rather than
+   appending new-key receipts to the old key's chain. Retain the old ledger, its final
+   head, and its public key for as long as its receipts must stay verifiable.
+4. Destroy the old private seed once no signer needs it. If rotation is because of
+   suspected compromise, remove the old public-key pin immediately instead of waiting
+   for the overlap window, and treat receipts it signed after the suspected exposure as
+   untrusted.
 
 ## Verification limits
 
@@ -130,4 +181,5 @@ reordering, foreign entries, and truncation of the recorded chain.
 It does not prove semantic correctness, completeness, fairness, freshness, wall-clock
 time, signer honesty, authorization, confidentiality, or first presentation. A valid
 receipt can be replayed forever. Applications needing semantic replay prevention must
-keep caller-owned nonce or request-ID state.
+keep caller-owned nonce or request-ID state; see
+[replay protection is caller-owned](#replay-protection-is-caller-owned).

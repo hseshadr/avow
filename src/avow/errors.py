@@ -81,6 +81,17 @@ class ReceiptSchemaMismatch(AvowError):
     code: ClassVar[str] = "avow.receipt_schema_mismatch"
 
 
+class KeyPermissionsInsecure(AvowError):
+    """A signing-key file grants group or other permissions on a POSIX system.
+
+    The seed is unencrypted; filesystem permissions are its only protection. A file
+    another account can read may already be disclosed, so loading refuses it rather
+    than signing with a key whose secrecy cannot be assumed. Restore owner-only mode
+    (``chmod 600``), and rotate the key if the exposure may have been exploited."""
+
+    code: ClassVar[str] = "avow.key_permissions_insecure"
+
+
 # Deprecated alias, kept for one minor so `except ReplayMismatch:` written against 0.2.x
 # keeps working. The `code` it carries is now `avow.payload_hash_mismatch`; a caller that
 # branches on the old string must be updated. Removed in 0.4.0.

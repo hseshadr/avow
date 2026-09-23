@@ -7,6 +7,7 @@ import pytest
 
 import avow._atomic as atomic_module
 import avow.keys as keys_module
+from avow.errors import KeyPermissionsInsecure
 from avow.keys import (
     _create_key_pair,
     generate_signing_key,
@@ -184,3 +185,53 @@ def test_pair_creation_publishes_matching_owner_only_artifacts(tmp_path: Path) -
     assert public.read_text(encoding="utf-8") == public_key_hex(key)
     assert stat.S_IMODE(private.stat().st_mode) == 0o600
     assert stat.S_IMODE(public.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o604, 0o644, 0o660, 0o620, 0o602, 0o610, 0o601])
+def test_should_refuse_a_signing_key_that_group_or_other_can_access(
+    tmp_path: Path, mode: int
+) -> None:
+    # Given a valid seed whose file grants any group or other permission bit
+    path = tmp_path / "signing.key"
+    save_signing_key(generate_signing_key(), path=path)
+    path.chmod(mode)
+    # When it is loaded
+    with pytest.raises(KeyPermissionsInsecure) as caught:
+        load_signing_key(path)
+    # Then loading fails closed with a stable, value-free code
+    assert caught.value.code == "avow.key_permissions_insecure"
+    assert str(path) not in str(caught.value)
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o400])
+def test_should_load_an_owner_only_signing_key(tmp_path: Path, mode: int) -> None:
+    # Given a key file only its owner can access
+    key = generate_signing_key()
+    path = tmp_path / "signing.key"
+    save_signing_key(key, path=path)
+    path.chmod(mode)
+    # When it is loaded, then the seed round-trips
+    assert load_signing_key(path) == key
+
+
+def test_should_check_permissions_before_reading_the_seed_length(tmp_path: Path) -> None:
+    # Given a world-readable file that is not even a valid seed
+    path = tmp_path / "signing.key"
+    path.write_bytes(b"short")
+    path.chmod(0o644)
+    # When it is loaded, then the permission refusal wins over the length check
+    with pytest.raises(KeyPermissionsInsecure):
+        load_signing_key(path)
+
+
+def test_should_skip_the_permission_check_where_posix_modes_do_not_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given a platform without POSIX permission bits and a loose-looking file
+    key = generate_signing_key()
+    path = tmp_path / "signing.key"
+    save_signing_key(key, path=path)
+    path.chmod(0o644)
+    monkeypatch.setattr(keys_module.os, "name", "nt")
+    # When it is loaded, then the mode bits are not interpreted
+    assert load_signing_key(path) == key
