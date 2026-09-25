@@ -4,6 +4,12 @@ All notable standalone Avow changes will be recorded here.
 
 ## [Unreleased]
 
+- **Packaging:** the release verifier now refuses any wheel or sdist that installs a
+  top-level name other than `avow`, and clean-installs the wheel beside
+  `assay-engine` in both orders. Every `avow` release up to `0.4.1` (published from
+  the pre-split `hseshadr/assay` repo) shipped top-level `assay/` and `writ/`
+  packages that overwrote `assay-engine` and broke `from assay import ScoreResult`.
+  This repo has never built those packages; the guard keeps it that way.
 - Rewrite the README to the portfolio template: a plain-language first screen, a
   runnable 60-second example whose real output is the hero, and a
   `tests/test_readme_contract.py` gate that re-runs that example with network access
