@@ -169,30 +169,44 @@ def test_should_keep_opening_free_of_other_domain_language() -> None:
     assert violations == ()
 
 
-def test_should_state_proof_limits_and_unpublished_split_status() -> None:
+def test_should_state_proof_limits_and_first_clean_release_status() -> None:
     # Given the root product interface
     markdown = _readme()
     # When proof and release claims are inspected
     assert "## What this proves" in markdown
     assert "## What this does not prove" in markdown
-    # Then source and published identities stay explicitly separate
-    assert _source_version() == "0.5.0.dev0"
+    # Then 0.5.0 is named as the first clean release and 0.1.0-0.4.1 as the broken ones
+    assert _source_version() == "0.5.0"
     assert f"`{_source_version()}`" in markdown
-    assert re.search(r"local split candidate", markdown, re.I)
-    assert re.search(r"not\s+published", markdown, re.I)
-    assert re.search(r"published\s+`avow` `0\.4\.1`[^.]*untouched", markdown, re.I)
+    assert re.search(r"first release (built )?from this repository", markdown, re.I)
+    assert re.search(r"`0\.1\.0`[\s\S]{0,40}`0\.4\.1`[^.]*`assay/`[^.]*`writ/`", markdown)
+    assert re.search(r"yank", markdown, re.I)
 
 
-def test_should_state_both_unpublished_candidate_versions_without_registry_drift() -> None:
-    # Given the Python and npm source candidates plus their reader-facing status
+def test_should_state_both_release_versions_without_registry_drift() -> None:
+    # Given the Python and npm sources plus their reader-facing status
     root = _readme()
     quickstart = Path("QUICKSTART.md").read_text(encoding="utf-8")
     typescript = _TYPESCRIPT_README.read_text(encoding="utf-8")
-    # Then local versions use ecosystem spellings while published 0.4.1 stays untouched
-    assert (_source_version(), _npm_source_version()) == ("0.5.0.dev0", "0.5.0-dev.0")
-    assert all("`0.5.0-dev.0`" in text for text in (root, quickstart, typescript))
-    assert re.search(r"published `@edgeproc/avow` `0\.4\.1`\s+also remains\s+untouched", root)
-    assert "not published" in typescript
+    security = Path("SECURITY.md").read_text(encoding="utf-8")
+    # Then both ecosystems ship the same 0.5.0 and no doc still names the dev candidate
+    assert (_source_version(), _npm_source_version()) == ("0.5.0", "0.5.0")
+    assert all("`0.5.0`" in text for text in (root, quickstart, typescript, security))
+    assert not any(
+        re.search(r"0\.5\.0[.-]dev", text) for text in (root, quickstart, typescript, security)
+    )
+    assert "dist/avow-0.5.0-py3-none-any.whl" in quickstart
+
+
+def test_should_record_the_packaging_fix_and_upgrade_path_in_the_changelog() -> None:
+    # Given the 0.5.0 changelog entry
+    changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+    entry = changelog.partition("## [0.5.0]")[2].partition("\n## [")[0]
+    # Then it explains the clobbering fix, the assay-engine repair, and the yank plan
+    assert entry
+    assert "`assay/`" in entry and "`writ/`" in entry
+    assert re.search(r"reinstall[^.]*assay-engine", entry, re.I)
+    assert re.search(r"yank[^.]*`0\.1\.0`[^.]*`0\.4\.1`", entry, re.I)
 
 
 def test_should_keep_release_tooling_out_of_end_user_first_run() -> None:

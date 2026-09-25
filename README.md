@@ -36,10 +36,10 @@ output: original: {'service': 'checkout-api', 'decision': 'approved'} -> verifie
 - **Not for** — Hiding data (a receipt is not encrypted) or proving a record is true,
   fresh, or fair; Avow proves only that it is unchanged and who signed it. Also not a
   defence against someone presenting the same valid receipt twice.
-- **Status** — Beta: no version of this repository has been tagged or published yet;
-  the source is the unpublished `0.5.0.dev0` / `0.5.0-dev.0` candidate. The `avow` and
-  `@edgeproc/avow` 0.4.1 packages on PyPI and npm predate this repository. See
-  [CHANGELOG](CHANGELOG.md).
+- **Status** — Beta: `0.5.0` is the first release from this repository, as `avow` on
+  PyPI and `@edgeproc/avow` on npm. Python releases `0.1.0` through `0.4.1` predate this
+  repository and installed stray packages that overwrote another project's files; they
+  are being yanked, so install `0.5.0` or newer. See [CHANGELOG](CHANGELOG.md).
 
 ## Try it in 60 seconds
 
@@ -168,9 +168,9 @@ action-policy logic belong to their applications, not to Avow.
   confidentiality (the record is plain text); a private key someone else has read — it is
   an unencrypted seed guarded only by file permissions; and a ledger plus its head file
   both rewritten by an attacker, unless you pinned the head elsewhere.
-- **Verify a release:** this repository has not published a release yet, so build from a
-  commit you have reviewed (`uv build`, then `pnpm --dir ts build` and
-  `pnpm --dir ts pack`). The release workflow
+- **Verify a release:** check the PyPI and npm provenance attestations for `0.5.0`, or
+  build from a commit you have reviewed (`uv build`, then `pnpm --dir ts build` and
+  `pnpm --dir ts pack`) and compare. The release workflow
   publishes with PyPI and npm provenance, and refuses when registry bytes differ from the
   reviewed build.
 
@@ -264,10 +264,13 @@ instead. To prove that packaged path, build and install the wheel as shown in th
 
 ### Version and publication status
 
-The Python source version is `0.5.0.dev0`; the npm source version is its SemVer spelling,
-`0.5.0-dev.0`. Both are local split candidates and are not published. The published
-`avow` `0.4.1` remains untouched. The published `@edgeproc/avow` `0.4.1` also remains
-untouched. No command in this README publishes, tags, or changes either registry release.
+The Python and npm source versions are both `0.5.0`. Pushing the exact tag `v0.5.0` is
+the only thing that publishes them, through the trusted-publishing workflow. Python
+releases `0.1.0` through `0.4.1` were built from the pre-split repository and shipped
+top-level `assay/` and `writ/` packages that overwrote `assay-engine`; they will be
+yanked once `0.5.0` is verified on PyPI. If an older `avow` removed `assay-engine`'s
+files, run `pip uninstall assay-engine && pip install assay-engine`. No command in this
+README publishes, tags, or changes a registry release.
 
 ## Usage & API
 
@@ -291,12 +294,11 @@ gitignored here and must never be committed; share only the `.pub` file.
 
 ## Limitations & roadmap
 
-**Shipped:** in source only — no tagged release of this repository yet. The source
-includes Python and TypeScript receipts, the Python `avow` command, the Python ledger,
+**Shipped:** `0.5.0`, the first tagged release of this repository. It includes Python and TypeScript receipts, the Python `avow` command, the Python ledger,
 and the refusal of group- or other-readable key files.
 
-**Planned (not shipped):** a first tagged, published release of the `0.5.0` candidates,
-which needs explicit maintainer approval.
+**Planned (not shipped):** yanking the broken `0.1.0`–`0.4.1` Python releases once
+`0.5.0` is verified on PyPI.
 
 **Not shipped:** a KMS/HSM seam for signing keys — none exists yet. Replay protection
 stays caller-owned by design; see
