@@ -41,15 +41,14 @@ AVOW_DEMO_DIR="$PWD/demo-output" bash examples/run_evidence_loop.sh
 
 ## Prove the wheel, outside the repository
 
-The checkout is source, not an installed package. Python `0.5.0.dev0` and npm
-`0.5.0-dev.0` are local candidates and are not published, so build and install the
-wheel to prove the real Python package artifact:
+The checkout is source, not an installed package. To prove the real `0.5.0` Python
+package artifact rather than the source tree, build and install the wheel:
 
 ```bash
 uv build --wheel
 tmp="$(mktemp -d)"
 uv venv --python 3.13 "$tmp/venv"
-uv pip install --python "$tmp/venv/bin/python" dist/avow-0.5.0.dev0-py3-none-any.whl
+uv pip install --python "$tmp/venv/bin/python" dist/avow-0.5.0-py3-none-any.whl
 cp -R examples "$tmp/examples"
 PATH="$tmp/venv/bin:$PATH" bash "$tmp/examples/run_evidence_loop.sh"
 ```

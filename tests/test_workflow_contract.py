@@ -256,9 +256,7 @@ def test_should_verify_real_release_artifacts_through_clean_installs(tmp_path: P
     )
     # Then all three consumer surfaces pass with aligned metadata
     assert result.returncode == 0, result.stderr
-    assert result.stdout == (
-        "verified release artifacts: avow 0.5.0.dev0 and @edgeproc/avow 0.5.0-dev.0\n"
-    )
+    assert result.stdout == ("verified release artifacts: avow 0.5.0 and @edgeproc/avow 0.5.0\n")
 
 
 def test_should_explain_node_22_requirement_before_running_release_gate(tmp_path: Path) -> None:
@@ -469,6 +467,25 @@ def test_should_pin_supported_npm_only_in_the_npm_publish_lane() -> None:
     assert source.count("npm@12.0.2") == 1
 
 
+def test_should_anchor_the_npm_tarball_so_npm_reads_a_file_not_github_shorthand() -> None:
+    # Given npm parses a bare `dir/file.tgz` argument as a `user/repo` GitHub spec
+    command = _commands(_job(_workflow("publish.yml"), "publish-npm"))
+    # When the publish lane names its reviewed tarball
+    published = re.search(r"npm publish (\S+)", command)
+    # Then the path is explicitly relative, so it can only resolve to the local file
+    assert published is not None
+    assert published.group(1) == "./release/npm/*.tgz"
+
+
+def test_should_match_the_registered_pypi_trusted_publisher_exactly() -> None:
+    # Given PyPI trusts only hseshadr/avow, workflow publish.yml, with no environment
+    publish = _job(_workflow("publish.yml"), "publish-python")
+    # Then the OIDC job runs from that file without naming a deployment environment
+    assert (_WORKFLOW_DIR / "publish.yml").is_file()
+    assert "environment" not in publish
+    assert _mapping(publish["permissions"])["id-token"] == "write"
+
+
 def test_should_keep_npm_prereleases_off_the_latest_channel() -> None:
     # Given stable and prerelease versions accepted by the release workflow
     sys.path.insert(0, str(Path.cwd()))
@@ -516,10 +533,10 @@ def test_should_skip_the_entire_oidc_job_for_identical_registry_releases() -> No
 
 
 def test_should_fail_closed_until_python_and_npm_versions_align(tmp_path: Path) -> None:
-    # Given the current intentionally divergent unpublished package versions
+    # Given a Python 0.5.0 source beside a stale npm 0.4.1 manifest
     script = _release_fixture(tmp_path / "divergent", npm_version="0.4.1")
     # When a tag matches only the Python candidate
-    result = _run_identity(script, "v0.5.0-dev.0")
+    result = _run_identity(script, "v0.5.0")
     # Then release eligibility fails without disclosing artifact metadata
     assert (result.returncode, result.stdout) == (1, "")
     assert result.stderr == "release tag and artifact versions do not match\n"
@@ -527,14 +544,14 @@ def test_should_fail_closed_until_python_and_npm_versions_align(tmp_path: Path) 
 
 def test_should_accept_only_one_tag_matching_both_artifact_versions(tmp_path: Path) -> None:
     # Given aligned Python and npm artifact metadata
-    script = _release_fixture(tmp_path / "aligned", npm_version="0.5.0-dev.0")
+    script = _release_fixture(tmp_path / "aligned", npm_version="0.5.0")
     # When the exact shared version tag is checked
-    exact = _run_identity(script, "v0.5.0-dev.0")
-    wrong = _run_identity(script, "v0.5.0")
+    exact = _run_identity(script, "v0.5.0")
+    wrong = _run_identity(script, "v0.5.0-dev.0")
     # Then only the exact tag is release-eligible
     assert (exact.returncode, exact.stdout, exact.stderr) == (
         0,
-        "verified release identity: v0.5.0-dev.0\n",
+        "verified release identity: v0.5.0\n",
         "",
     )
     assert wrong.returncode == 1

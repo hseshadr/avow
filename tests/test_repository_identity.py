@@ -48,7 +48,7 @@ def test_should_build_only_avow_distribution_and_package(tmp_path: Path) -> None
     # Then both declared and built identities contain only Avow
     assert project["project"]["name"] == "avow"
     assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/avow"]
-    assert (name, version, packages) == ("avow", "0.5.0.dev0", {"avow"})
+    assert (name, version, packages) == ("avow", "0.5.0", {"avow"})
 
 
 def test_should_ship_no_scoring_source() -> None:
