@@ -1,11 +1,11 @@
 {
   "name": "@edgeproc/avow",
-  "version": "0.5.0-dev.0",
+  "version": "0.5.0",
   "publishConfig": {
     "access": "public"
   },
   "type": "module",
-  "description": "Seals a record into a signed receipt anyone can check offline — for teams that must later prove it was not changed.",
+  "description": "Avow signs a JSON record into a receipt, a file anyone can check offline to confirm the record is unchanged and who signed it.",
   "keywords": [
     "ed25519",
     "rfc8785",

@@ -17,6 +17,7 @@ from typing import cast
 
 _PYTHON_PRERELEASE = re.compile(r"^(\d+\.\d+\.\d+)\.dev(\d+)$")
 _ARGUMENT_COUNT = 2
+_SDIST_PACKAGE_DEPTH = 2  # avow-X.Y.Z/src/<package>/...
 _NODE_PROBE = """
 import { generateSeedHex, publicKeyHex, signPayload, verifySignature } from '@edgeproc/avow';
 const key = generateSeedHex();
@@ -29,6 +30,15 @@ from avow import generate_signing_key, public_key_hex, sign_payload, verify_sign
 key = generate_signing_key()
 receipt = sign_payload({"artifact": "sha256:clean-install"}, key)
 verify_signature(receipt, expected_public_key=public_key_hex(key))
+"""
+# avow must own exactly these top-level import names; anything else collides with
+# another distribution (every release up to 0.4.1 shipped ``assay`` and ``writ``).
+_OWN_TOP_LEVELS = frozenset({"avow"})
+# A real neighbour that owns ``assay``: installing avow beside it must break neither.
+NEIGHBOUR = "assay-engine==0.5.0.dev3"
+_NEIGHBOUR_PROBE = """
+from assay import ScoreResult
+from avow import sign_payload
 """
 
 
@@ -77,6 +87,43 @@ def _sdist_metadata(path: Path) -> bytes:
         return extracted.read()
 
 
+def _top_level(member: str) -> str | None:
+    head = member.partition("/")[0]
+    if head.endswith((".dist-info", ".data")):
+        return None
+    return head.removesuffix(".py")
+
+
+def wheel_top_levels(path: Path) -> frozenset[str]:
+    """Return every name a wheel installs directly into site-packages."""
+    with zipfile.ZipFile(path) as archive:
+        names = (_top_level(member) for member in archive.namelist())
+        return frozenset(name for name in names if name)
+
+
+def sdist_top_levels(path: Path) -> frozenset[str]:
+    """Return every package an sdist carries under its ``src/`` layout."""
+    with tarfile.open(path, "r:gz") as archive:
+        parts = (Path(member.name).parts for member in archive.getmembers())
+        return frozenset(
+            part[_SDIST_PACKAGE_DEPTH]
+            for part in parts
+            if len(part) > _SDIST_PACKAGE_DEPTH and part[1] == "src"
+        )
+
+
+def _refuse_foreign(kind: str, names: frozenset[str]) -> None:
+    foreign = sorted(names - _OWN_TOP_LEVELS)
+    if foreign:
+        raise ValueError(f"{kind} ships foreign top-level names: {foreign}")
+
+
+def validate_top_levels(wheel: Path, sdist: Path) -> None:
+    """Refuse artifacts that would install packages avow does not own."""
+    _refuse_foreign("wheel", wheel_top_levels(wheel))
+    _refuse_foreign("sdist", sdist_top_levels(sdist))
+
+
 def _python_identity(payload: bytes) -> Identity:
     metadata = BytesParser().parsebytes(payload)
     return Identity(name=str(metadata["Name"]), version=str(metadata["Version"]))
@@ -111,6 +158,7 @@ def _validate_metadata(artifacts: Artifacts) -> tuple[Identity, Identity]:
     wheel = _python_identity(_wheel_metadata(artifacts.wheel))
     sdist = _python_identity(_sdist_metadata(artifacts.sdist))
     npm = _npm_identity(artifacts.npm)
+    validate_top_levels(artifacts.wheel, artifacts.sdist)
     if wheel != sdist or wheel.name != "avow":
         raise ValueError("Python artifact metadata does not match")
     if npm.name != "@edgeproc/avow" or npm.version != _npm_spelling(wheel.version):
@@ -157,6 +205,20 @@ def _clean_python_install(artifact: Path, root: Path) -> None:
     _run([python, "-c", _PYTHON_PROBE])
 
 
+def _install_in_order(environment: Path, first: str | Path, second: str | Path) -> None:
+    _run(["uv", "venv", "--python", "3.13", environment])
+    python = environment / "bin/python"
+    _run(["uv", "pip", "install", "--python", python, first])
+    _run(["uv", "pip", "install", "--python", python, second])
+    _run([python, "-c", _NEIGHBOUR_PROBE])
+
+
+def coinstall_with_neighbour(wheel: Path, root: Path) -> None:
+    """Install avow beside assay-engine in both orders; both must still import."""
+    _install_in_order(root / "avow-first", wheel, NEIGHBOUR)
+    _install_in_order(root / "neighbour-first", NEIGHBOUR, wheel)
+
+
 def _clean_npm_install(artifact: Path, root: Path) -> None:
     project = root / "npm"
     project.mkdir()
@@ -175,6 +237,7 @@ def main() -> int:
     with TemporaryDirectory(prefix="avow-release-") as temporary:
         _clean_python_install(artifacts.wheel, Path(temporary))
         _clean_python_install(artifacts.sdist, Path(temporary))
+        coinstall_with_neighbour(artifacts.wheel, Path(temporary))
         _clean_npm_install(artifacts.npm, Path(temporary))
     _write_digest_manifest(root, artifacts)
     sys.stdout.write(

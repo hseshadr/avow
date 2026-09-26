@@ -161,7 +161,7 @@ jobs:
       - name: Publish npm artifact
         env:
           NPM_DIST_TAG: ${{ needs.preflight-npm.outputs.dist-tag }}
-        run: npm publish release/npm/*.tgz --access public --provenance --tag "$NPM_DIST_TAG"
+        run: npm publish ./release/npm/*.tgz --access public --provenance --tag "$NPM_DIST_TAG"
 
   verify-published:
     name: Verify registry bytes

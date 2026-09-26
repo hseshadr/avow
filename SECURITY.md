@@ -7,9 +7,9 @@ payloads, or other secrets in the report.
 
 ## Supported versions
 
-This repository currently contains unpublished Python `0.5.0.dev0` and npm
-`0.5.0-dev.0` candidates. Neither candidate is a supported registry release. The
-published `avow` `0.4.1` and `@edgeproc/avow` `0.4.1` packages remain untouched.
+`0.5.0` (Python `avow` and npm `@edgeproc/avow`) is the supported release. Python
+releases `0.1.0` through `0.4.1` are unsupported: they shipped stray top-level `assay/`
+and `writ/` packages and will be yanked from PyPI.
 
 ## Report a vulnerability
 
