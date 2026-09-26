@@ -39,11 +39,12 @@ uv sync --frozen --all-groups
 uv run pytest -q
 ```
 
-`uv sync` takes a few seconds. The test run takes about 1 to 2 minutes, because some
-tests build and install the real wheel and npm tarball. Success ends with a line like:
+The clone and `uv sync` took a few seconds (longer the first time `uv` downloads Python
+and packages). The test run took about 2 minutes, because some tests build and install
+the real wheel and npm tarball. Success ends with a line like:
 
 ```text
-258 passed in 95.65s
+265 passed in 113.22s (0:01:53)
 ```
 
 (The exact count grows as tests are added.) For the TypeScript package:
@@ -80,8 +81,8 @@ uv run poe gate && pnpm --dir ts gate
 ```
 
 `uv run poe gate` runs ruff (lint and format), `mypy --strict`, a Grade A complexity
-check (`xenon`), and the Python tests with at least 90% branch coverage. It takes about
-2 minutes. `pnpm --dir ts gate` runs Biome, strict TypeScript, Vitest with coverage, the
+check (`xenon`), and the Python tests with at least 90% branch coverage. It took about
+2.5 minutes here. `pnpm --dir ts gate` runs Biome, strict TypeScript, Vitest with coverage, the
 build, and the speed benchmark, in about 20 seconds.
 
 The Python check runs `ruff --fix` and `ruff format`, so it may rewrite files. CI fails
