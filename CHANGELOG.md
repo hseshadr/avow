@@ -4,6 +4,11 @@ All notable standalone Avow changes will be recorded here.
 
 ## [Unreleased]
 
+- Rewrite the README in plain English: what a receipt is, a CLI walkthrough with real
+  output, honest limits, and install steps. Move the technical detail into the new
+  `docs/ARCHITECTURE.md`, add `docs/GETTING_STARTED.md` for new developers, and update
+  the README contract tests to pin the new section order and ban internal jargon.
+
 ## [0.5.0]
 
 The first release built from this repository, and the first clean `avow` wheel.

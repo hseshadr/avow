@@ -10,6 +10,8 @@ from pathlib import Path
 
 _README = Path("README.md")
 _TYPESCRIPT_README = Path("ts/README.md")
+_ARCHITECTURE = Path("docs/ARCHITECTURE.md")
+_GETTING_STARTED = Path("docs/GETTING_STARTED.md")
 _FORBIDDEN_OPENING = ("Assay", "score", "ranking", "recommendation", "AML", "astrology")
 _TREE_LINE = re.compile(
     r"^(src/avow|ts/src)/\s+→\s+(Python wheel|npm tarball):\s+(\S+)/$",
@@ -107,9 +109,19 @@ def _npm_roots(tarball: Path) -> set[str]:
         }
 
 
-def _what_it_does(markdown: str) -> str:
-    line = markdown.partition("- **What it does**")[2].partition("\n- **")[0]
-    return " ".join(line.split())
+def _architecture() -> str:
+    return _ARCHITECTURE.read_text(encoding="utf-8")
+
+
+def _getting_started() -> str:
+    return _GETTING_STARTED.read_text(encoding="utf-8")
+
+
+def _problem_paragraphs(markdown: str) -> str:
+    intro = markdown.partition("\n## ")[0]
+    return " ".join(
+        block for block in re.split(r"\n\s*\n", intro) if not block.startswith(("#", "*", "["))
+    )
 
 
 def test_should_open_readme_with_one_clear_product_identity() -> None:
@@ -118,34 +130,35 @@ def test_should_open_readme_with_one_clear_product_identity() -> None:
     # When its identity and plain-language explanation are read
     assert re.findall(r"^# .+$", markdown, re.MULTILINE) == ["# Avow"]
     tagline = _first_paragraph(markdown).lower()
-    summary = _what_it_does(markdown).lower()
+    problem = " ".join(_problem_paragraphs(markdown).lower().split())
     # Then it explains the complete plain-language purpose without leading jargon
-    assert all(term in tagline for term in ("signed", "receipt", "check offline"))
-    assert all(term in summary for term in ("json", "signed receipt", "no internet"))
+    assert all(term in tagline for term in ("json", "receipt", "check offline"))
+    assert all(term in problem for term in ("public key", "no server", "no internet"))
 
 
-def test_should_put_one_line_cold_start_before_internals_and_keep_the_evidence_loop() -> None:
+def test_should_put_one_line_install_before_internals_and_keep_the_evidence_loop() -> None:
     # Given the root product interface
     markdown = _readme()
     # When its runnable paths are extracted
-    assert markdown.index("## Try it in 60 seconds") < markdown.index("## How it works")
+    assert markdown.index("## Try it") < markdown.index("## How it works")
     assert markdown.index("## How it works") < markdown.index("## Install")
     commands = _first_runnable_block(markdown)
     loop = re.findall(r"```bash\n(bash examples/run_evidence_loop\.sh)\n```", markdown)
-    # Then a cold reader starts from one line and the bounded evidence loop stays one line
-    assert commands == ("git clone https://github.com/hseshadr/avow.git && cd avow && uv sync",)
+    # Then a cold reader starts from one install line and the evidence loop stays one line
+    assert commands == ('pip install "avow>=0.5.0"',)
     assert loop == ["bash examples/run_evidence_loop.sh"]
 
 
 def test_should_explain_prerequisites_and_checkout_command_selection() -> None:
-    # Given the install section
-    install = _readme().partition("## Install")[2].partition("\n## ")[0]
-    opening = " ".join(install.lower().split())
+    # Given the install section and the developer guide
+    install = " ".join(_readme().partition("## Install")[2].partition("\n## ")[0].lower().split())
+    guide = " ".join(_getting_started().lower().split())
     # When prerequisites and command resolution are read
-    assert all(term in opening for term in ("bash", "python 3.12", "`uv`"))
-    # Then it says this checkout wins over an unrelated installed command
-    assert "before any installed `avow`" in opening
-    assert "exercises this source checkout" in opening
+    assert all(term in install for term in ("python 3.12", "node.js 22.13"))
+    assert all(term in guide for term in ("bash", "python 3.12", "`uv`"))
+    # Then the guide says this checkout wins over an unrelated installed command
+    assert "before any installed `avow`" in guide
+    assert "exercises this source checkout" in guide
 
 
 def test_should_pin_typescript_signer_independently_of_receipt() -> None:
@@ -173,8 +186,8 @@ def test_should_state_proof_limits_and_first_clean_release_status() -> None:
     # Given the root product interface
     markdown = _readme()
     # When proof and release claims are inspected
-    assert "## What this proves" in markdown
-    assert "## What this does not prove" in markdown
+    assert "## What this proves" in _architecture()
+    assert "## What this does not prove" in _architecture()
     # Then 0.5.0 is named as the first clean release and 0.1.0-0.4.1 as the broken ones
     assert _source_version() == "0.5.0"
     assert f"`{_source_version()}`" in markdown
@@ -210,12 +223,12 @@ def test_should_record_the_packaging_fix_and_upgrade_path_in_the_changelog() -> 
 
 
 def test_should_keep_release_tooling_out_of_end_user_first_run() -> None:
-    # Given the end-user cold start and the later maintainer-only release section
+    # Given the end-user cold start and the maintainer-only release section of the guide
     markdown = _readme()
     first_run = "\n".join(_first_runnable_block(markdown))
-    release = markdown.partition("## Maintainer release gate")[2]
+    release = _getting_started().partition("## Maintainer release check")[2]
     # Then users still get one simple start while maintainers get exact tool prerequisites
-    assert first_run == "git clone https://github.com/hseshadr/avow.git && cd avow && uv sync"
+    assert first_run == 'pip install "avow>=0.5.0"'
     assert "release-candidate" not in markdown.partition("## How it works")[0]
     assert all(item in release for item in ("Node 22", "Corepack", "pnpm 11.5.0"))
     assert "uv run poe release-candidate" in release
@@ -223,7 +236,7 @@ def test_should_keep_release_tooling_out_of_end_user_first_run() -> None:
 
 def test_should_probe_the_direct_pinned_pnpm_used_by_release_scripts() -> None:
     # Given the maintainer prerequisites and the release scripts
-    release = _readme().partition("## Maintainer release gate")[2]
+    release = _getting_started().partition("## Maintainer release check")[2]
     scripts = "\n".join(
         Path(path).read_text(encoding="utf-8")
         for path in ("scripts/build_release_artifacts.sh", "scripts/verify_release_candidate.sh")
@@ -243,10 +256,23 @@ def test_should_resolve_every_readme_local_link() -> None:
     assert tuple(path for path in links if not path.exists()) == ()
 
 
+def test_should_resolve_every_local_link_in_the_moved_docs() -> None:
+    # Given every local destination in the docs that took over README material
+    links = tuple(
+        doc.parent / link
+        for doc in (_ARCHITECTURE, _GETTING_STARTED)
+        for link in _local_links(doc.read_text(encoding="utf-8"))
+    )
+    # Then each resolves relative to its own document
+    assert links
+    assert tuple(path for path in links if not path.exists()) == ()
+
+
 def test_should_map_source_tree_one_to_one_to_real_built_packages(tmp_path: Path) -> None:
     # Given machine-readable source-to-artifact claims
     claims = {
-        (source, artifact): target for source, artifact, target in _TREE_LINE.findall(_readme())
+        (source, artifact): target
+        for source, artifact, target in _TREE_LINE.findall(_architecture())
     }
     # When both package artifacts are built and inspected
     actual = {
@@ -259,14 +285,24 @@ def test_should_map_source_tree_one_to_one_to_real_built_packages(tmp_path: Path
 
 
 def test_should_state_replay_and_key_custody_limits_at_the_boundary() -> None:
-    # Given the README's proof boundary
-    boundary = _readme().partition("## What this does not prove")[2].partition("\n## ")[0]
+    # Given the architecture guide's proof boundary
+    boundary = _architecture().partition("## What this does not prove")[2].partition("\n## ")[0]
     flat = " ".join(boundary.split())
     # Then replay is explicitly out of scope and points at the caller recipe
     assert "Not a replay defence" in flat
-    assert "docs/OPERATIONS.md#replay-protection-is-caller-owned" in flat
+    assert "OPERATIONS.md#replay-protection-is-caller-owned" in flat
     # And key custody is stated plainly: an unencrypted seed guarded by file permissions
     assert all(term in flat for term in ("unencrypted", "filesystem permissions", "KMS", "HSM"))
+
+
+def test_should_state_replay_and_key_custody_limits_in_the_readme() -> None:
+    # Given the README's plain list of limits
+    limits = _readme().partition("## What it does not do")[2].partition("\n## ")[0]
+    flat = " ".join(limits.split())
+    # Then replay and key custody are named, with the caller recipe linked
+    assert "replay" in flat.lower()
+    assert "docs/OPERATIONS.md#replay-protection-is-caller-owned" in flat
+    assert all(term in flat for term in ("not encrypted", "file permissions", "KMS", "HSM"))
 
 
 def test_should_give_operators_replay_and_rotation_recipes() -> None:
